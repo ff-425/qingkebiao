@@ -2,7 +2,9 @@ name: Build APK
 
 # 每次推到 main 就出一个 APK，并更新 latest 这个 Release，
 # 于是手机上永远有一个固定的下载直链：
-#   https://github.com/<用户名>/<仓库名>/releases/latest/download/qingkebiao.apk
+#   https://github.com/<用户名>/<仓库名>/releases/download/latest/qingkebiao.apk
+# 注意是 /releases/download/latest/，不是 /releases/latest/download/——
+# 后者只指向最新的「正式」release，而这里发的是 prerelease，会 404。
 on:
   push:
     branches: [main]
