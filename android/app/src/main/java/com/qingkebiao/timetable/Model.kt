@@ -77,7 +77,9 @@ data class Timetable(
     /** 记下来是为了下拉刷新时重新拉取。原生没有 CORS 限制。 */
     val icsUrl: String = "",
     val overrides: List<DayOverride> = emptyList(),
-    val periods: List<PeriodSlot> = DEFAULT_PERIODS
+    val periods: List<PeriodSlot> = DEFAULT_PERIODS,
+    /** 从教务系统解析出来的原始课程块。留着它，改作息表就能原地重算。 */
+    val zfBlocks: List<Zf.Block> = emptyList()
 )
 
 fun Long.toLocalDateTime(zone: ZoneId = ZoneId.systemDefault()): LocalDateTime =

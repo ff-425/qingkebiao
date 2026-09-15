@@ -32,6 +32,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,7 +70,52 @@ class WebImportActivity : ComponentActivity() {
     }
 }
 
-/** 抓当前页 + 所有同源 iframe 的 HTML。教务系统很爱把课表塞进 iframe。 */
+/**
+ * 在每个页面开始加载时注入：挂钩 XHR 和 fetch，把返回的 JSON 响应记下来。
+ *
+ * 很多教务系统（正方新版就是）课表不在 HTML 里，而是页面用 XHR 取回一段 JSON
+ * 再填进表格。直接拿到那段 JSON 比解析渲染后的 DOM 可靠得多。
+ * 这里不写死任何接口地址，纯粹记录"长得像 JSON 的响应"，所以对各家系统通用。
+ */
+private const val INJECT_JS = """
+(function(){
+  if (window.__qkb_hooked) return;
+  window.__qkb_hooked = true;
+  window.__qkb_captures = [];
+  function keep(url, body, text){
+    try {
+      if (!text) return;
+      var t = String(text);
+      if (t.length < 40) return;
+      var c = t.charAt(0);
+      if (c !== '{' && c !== '[') return;
+      window.__qkb_captures.push({ url: String(url), body: String(body || ''), resp: t.slice(0, 500000) });
+      if (window.__qkb_captures.length > 15) window.__qkb_captures.shift();
+    } catch (e) {}
+  }
+  var XO = XMLHttpRequest.prototype.open, XS = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(m, u){ this.__qkb_url = u; return XO.apply(this, arguments); };
+  XMLHttpRequest.prototype.send = function(b){
+    var self = this;
+    try {
+      this.addEventListener('load', function(){ keep(self.__qkb_url, b, self.responseText); });
+    } catch (e) {}
+    return XS.apply(this, arguments);
+  };
+  var F = window.fetch;
+  if (F) {
+    window.fetch = function(){
+      var a = arguments;
+      return F.apply(this, a).then(function(r){
+        try { r.clone().text().then(function(t){ keep(a[0], '', t); }); } catch (e) {}
+        return r;
+      });
+    };
+  }
+})()
+"""
+
+/** 抓当前页 + 所有同源 iframe 的 HTML，外加记录到的 JSON 响应。 */
 private const val GRAB_JS = """
 (function(){
   function grab(doc){ try { return doc.documentElement.outerHTML; } catch(e){ return ''; } }
@@ -81,6 +127,12 @@ private const val GRAB_JS = """
       if (d) parts.push('<!-- IFRAME ' + i + ' src=' + fs[i].src + ' -->\n' + grab(d));
     } catch (e) { /* 跨源 iframe 读不到，跳过 */ }
   }
+  try {
+    var caps = window.__qkb_captures || [];
+    for (var k = 0; k < caps.length; k++) {
+      parts.push('<!-- XHR-JSON ' + caps[k].url + ' | POST-BODY: ' + caps[k].body + ' -->\n' + caps[k].resp);
+    }
+  } catch (e) {}
   return parts.join('\n<!-- ======== -->\n');
 })()
 """
@@ -100,7 +152,11 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
     var currentUrl by remember { mutableStateOf(startUrl) }
     var desktopUa by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
+    var err by remember { mutableStateOf(false) }
     var captured by remember { mutableStateOf<String?>(null) }
+    var blocks by remember { mutableStateOf<List<Zf.Block>?>(null) }
+    var currentWeek by remember { mutableIntStateOf(1) }
+    var imported by remember { mutableStateOf(false) }
 
     val saver = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/html")
@@ -126,13 +182,27 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
             }
             captured = html
             scope.launch { Store.saveCapturedHtml(ctx, html) }
-            // 粗判一下这页到底像不像课表，省得白抓一张登录页
-            val looksLikeTimetable = listOf("星期", "周一", "节次", "课程表", "第1节", "第一节")
-                .count { html.contains(it) }
-            msg = buildString {
-                append("抓到 ${html.length / 1024} KB。")
-                append(if (looksLikeTimetable >= 2) "看着像课表页 ✓" else "没看到「星期 / 节次」这类字样，可能不是课表页 —— 先在页面里点到课表再抓。")
-            }
+
+            // 直接就地解析。解析成功就不用再存文件发给谁了。
+            val r = runCatching { Zf.parse(html) }
+            r.fold(
+                onSuccess = { bs ->
+                    blocks = bs
+                    err = false
+                    msg = "解析成功：${Zf.courseCount(bs)} 门课、${bs.size} 个课程块、" +
+                        "共 ${bs.sumOf { b -> b.weeks.size }} 次上课，最大第 ${Zf.maxWeek(bs)} 周。\n" +
+                        "下面确认「今天是第几周」就能导入。"
+                },
+                onFailure = { e ->
+                    blocks = null
+                    err = true
+                    val jsonCount = Regex("<!-- XHR-JSON ").findAll(html).count()
+                    msg = "抓到 ${html.length / 1024} KB" +
+                        (if (jsonCount > 0) "（含 $jsonCount 段接口 JSON）" else "") +
+                        "，但没解析出课表：${e.message}\n" +
+                        "可以点「保存 HTML」存下来发我看。"
+                }
+            )
         }
     }
 
@@ -180,6 +250,18 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
                                 CookieManager.getInstance().setAcceptCookie(true)
                                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                                 webViewClient = object : WebViewClient() {
+                                    // 越早注入越好：课表那个 XHR 在页面脚本跑起来后很快就发了
+                                    override fun onPageStarted(
+                                        view: WebView?, url: String?, favicon: android.graphics.Bitmap?
+                                    ) {
+                                        view?.evaluateJavascript(INJECT_JS, null)
+                                        if (url != null) currentUrl = url
+                                    }
+
+                                    override fun onPageFinished(view: WebView?, url: String?) {
+                                        view?.evaluateJavascript(INJECT_JS, null)
+                                    }
+
                                     override fun doUpdateVisitedHistory(
                                         view: WebView?, url: String?, isReload: Boolean
                                     ) {
@@ -196,10 +278,40 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
                 HorizontalDivider(thickness = 1.dp, color = pal.rule)
                 Column(Modifier.fillMaxWidth().background(pal.panel).padding(10.dp)) {
                     msg?.let {
-                        MsgBox(pal, it)
+                        MsgBox(pal, it, err)
                         Spacer(Modifier.height(8.dp))
                     }
+
+                    // 课表页只给"第几周"，不给日期。问一句今天是第几周就能定住整个学期。
+                    if (blocks != null && !imported) {
+                        FieldRow(
+                            pal, "今天是第几周",
+                            "教务系统只给周次不给日期，靠这个反推开学日期"
+                        ) {
+                            IntStepper(pal, currentWeek, 1, Zf.maxWeek(blocks!!).coerceAtLeast(1), suffix = " 周") {
+                                currentWeek = it
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (blocks != null && !imported) {
+                            PrimaryButton(pal, "导入课表") {
+                                scope.launch {
+                                    runCatching { Store.importZf(ctx, blocks!!, currentWeek) }.fold(
+                                        onSuccess = { tt ->
+                                            imported = true
+                                            err = false
+                                            msg = "已导入 ${tt.sessions.size} 节课。" +
+                                                "时间是按内置作息表换算的，和你学校不一样就到设置里改「节次时间」。"
+                                        },
+                                        onFailure = { e -> err = true; msg = "导入失败：${e.message}" }
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
                         PrimaryButton(pal, "抓取本页课表") { capture() }
                         Spacer(Modifier.width(8.dp))
                         OutlineChip(pal, "保存 HTML", enabled = captured != null) {
@@ -209,9 +321,8 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
                     Spacer(Modifier.height(6.dp))
                     Hint(
                         pal,
-                        "先在上面自己登录、点到课表页面，再点「抓取本页课表」。" +
-                            "抓到之后点「保存 HTML」存成文件发我 —— 每所学校页面结构都不一样，" +
-                            "我看到真实页面才能写对解析器。"
+                        if (imported) "导入完成，可以关掉这个页面了。"
+                        else "先在上面自己登录、点到课表页面，等课表显示出来，再点「抓取本页课表」。"
                     )
                 }
             }

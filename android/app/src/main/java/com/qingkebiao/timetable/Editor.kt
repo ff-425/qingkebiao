@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -341,5 +342,96 @@ fun TermSettings(pal: Palette, d: Derived, onApply: (Timetable) -> Unit) {
     }
     if (!autoWeeks) {
         OutlineChip(pal, "恢复自动推算") { onApply(d.tt.copy(termWeeks = null)) }
+    }
+}
+
+/**
+ * 节次时间表编辑器。
+ *
+ * 教务系统的课表页只给"第几节"，不给时刻，所以这张表必须由用户定。
+ * 上面提供"按等长重排"一键生成（绝大多数学校就是等长 + 固定课间），
+ * 下面每一节还能单独微调，应付大课间、午休这种不规则安排。
+ */
+@Composable
+fun PeriodEditorDialog(
+    pal: Palette,
+    periods: List<PeriodSlot>,
+    onClose: () -> Unit,
+    onApply: (List<PeriodSlot>) -> Unit
+) {
+    val work = remember {
+        mutableStateListOf<PeriodSlot>().also { it.addAll(periods.ifEmpty { DEFAULT_PERIODS }) }
+    }
+    var lenMin by remember { mutableIntStateOf(45) }
+    var gapMin by remember { mutableIntStateOf(5) }
+    var amStart by remember { mutableIntStateOf(8 * 60) }
+    var pmStart by remember { mutableIntStateOf(14 * 60) }
+    var evStart by remember { mutableIntStateOf(18 * 60 + 30) }
+    var amCount by remember { mutableIntStateOf(5) }
+    var pmCount by remember { mutableIntStateOf(4) }
+    var evCount by remember { mutableIntStateOf(3) }
+
+    fun regenerate() {
+        val out = ArrayList<PeriodSlot>()
+        var idx = 1
+        for ((start, count) in listOf(amStart to amCount, pmStart to pmCount, evStart to evCount)) {
+            var t = start
+            repeat(count) {
+                out.add(PeriodSlot(idx, t, t + lenMin))
+                t += lenMin + gapMin
+                idx++
+            }
+        }
+        work.clear()
+        work.addAll(out)
+    }
+
+    Sheet(pal, "节次时间", onClose) {
+        Column {
+            Hint(
+                pal,
+                "教务系统只给「第几节」不给时刻，这张表决定课表上显示几点。" +
+                    "改完已导入的课表会按新时间重算。"
+            )
+
+            Spacer(Modifier.height(16.dp))
+            Label(pal, "按等长重排")
+            FieldRow(pal, "每节时长") { IntStepper(pal, lenMin, 30, 60, 5, " 分") { lenMin = it } }
+            FieldRow(pal, "课间") { IntStepper(pal, gapMin, 0, 30, 5, " 分") { gapMin = it } }
+            FieldRow(pal, "上午起点", "共 $amCount 节") { TimeStepper(pal, amStart) { amStart = it } }
+            FieldRow(pal, "上午几节") { IntStepper(pal, amCount, 0, 8) { amCount = it } }
+            FieldRow(pal, "下午起点") { TimeStepper(pal, pmStart) { pmStart = it } }
+            FieldRow(pal, "下午几节") { IntStepper(pal, pmCount, 0, 8) { pmCount = it } }
+            FieldRow(pal, "晚上起点") { TimeStepper(pal, evStart) { evStart = it } }
+            FieldRow(pal, "晚上几节") { IntStepper(pal, evCount, 0, 8) { evCount = it } }
+            Spacer(Modifier.height(8.dp))
+            OutlineChip(pal, "按上面重排") { regenerate() }
+
+            Spacer(Modifier.height(20.dp))
+            Label(pal, "逐节微调（共 ${work.size} 节）")
+            work.forEachIndexed { i, ps ->
+                Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Text(
+                        "第 ${ps.index} 节   ${ps.startMin.hhmm()} – ${ps.endMin.hhmm()}",
+                        color = pal.ink2, fontSize = 13.sp, fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TimeStepper(pal, ps.startMin) { m ->
+                            val dur = (ps.endMin - ps.startMin).coerceAtLeast(5)
+                            work[i] = ps.copy(startMin = m, endMin = (m + dur).coerceAtMost(24 * 60 - 1))
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        TimeStepper(pal, ps.endMin) { m ->
+                            work[i] = ps.copy(endMin = maxOf(m, ps.startMin + 5))
+                        }
+                    }
+                }
+                HorizontalDivider(thickness = 1.dp, color = pal.ruleSoft)
+            }
+
+            Spacer(Modifier.height(16.dp))
+            PrimaryButton(pal, "保存并重算课表") { onApply(work.toList()) }
+        }
     }
 }

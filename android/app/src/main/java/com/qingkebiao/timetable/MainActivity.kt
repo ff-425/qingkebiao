@@ -850,10 +850,29 @@ private fun SettingsDialog(
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf<String?>(null) }
+    var showPeriods by remember { mutableStateOf(false) }
+
+    // 改学期起点或作息表都要把已导入的课重算一遍；
+    // 其余设置（周末、调休、缩放）不碰课程，走普通 onApply，
+    // 免得把用户删掉的导入条目又算回来。
+    val applyAndRecompute: (Timetable) -> Unit = { onApply(Store.recomputeFromBlocks(it)) }
+
+    if (showPeriods) {
+        PeriodEditorDialog(
+            pal = pal,
+            periods = d.tt.periods,
+            onClose = { showPeriods = false },
+            onApply = { ps ->
+                applyAndRecompute(d.tt.copy(periods = ps))
+                showPeriods = false
+                msg = "作息表已保存，课表时间已按新作息重算。"
+            }
+        )
+    }
 
     Sheet(pal, "设置", onClose) {
         Column {
-            TermSettings(pal, d, onApply)
+            TermSettings(pal, d, applyAndRecompute)
 
             Spacer(Modifier.height(22.dp))
             Label(pal, "调休")
@@ -890,6 +909,23 @@ private fun SettingsDialog(
             }
             Spacer(Modifier.height(8.dp))
             OutlineChip(pal, "添加调休（今天）") { onEditOverride(LocalDate.now()) }
+
+            Spacer(Modifier.height(22.dp))
+            Label(pal, "作息")
+            Hint(
+                pal,
+                if (d.tt.zfBlocks.isEmpty())
+                    "教务系统导入的课表只给「第几节」，靠这张表换算成具体时间。"
+                else
+                    "当前课表来自教务系统，共 ${d.tt.zfBlocks.size} 个课程块。改作息表会原地重算，不用重新抓网页。"
+            )
+            Spacer(Modifier.height(8.dp))
+            FieldRow(
+                pal, "节次时间",
+                "第1节 ${d.tt.periods.firstOrNull()?.startMin?.hhmm() ?: "—"} 起，共 ${d.tt.periods.size} 节"
+            ) {
+                OutlineChip(pal, "编辑") { showPeriods = true }
+            }
 
             Spacer(Modifier.height(22.dp))
             Label(pal, "显示")

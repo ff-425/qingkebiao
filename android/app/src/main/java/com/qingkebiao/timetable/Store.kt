@@ -118,6 +118,49 @@ object Store {
         icsUrl: String = ""
     ): Timetable = mergeImported(ctx, Ics.parse(text), sourceLabel, icsUrl)
 
+    /**
+     * 正方课表页 → 课表。
+     *
+     * 页面里没有"第 1 周是哪天"，所以由调用方传"今天是第几周"反推学期起始。
+     * 节次时间同样不在页面上，用现有的 periods 作息表换算。
+     * 手动添加的条目照常保留。
+     */
+    suspend fun importZf(
+        ctx: Context,
+        blocks: List<Zf.Block>,
+        currentWeek: Int
+    ): Timetable {
+        val old = load(ctx)
+        val termStart = java.time.LocalDate.now().mondayOf()
+            .minusWeeks((currentWeek - 1).coerceAtLeast(0).toLong())
+        val parsed = Zf.toSessions(blocks, termStart, old.periods.ifEmpty { DEFAULT_PERIODS })
+        if (parsed.isEmpty()) throw Zf.ParseException("按作息表换算后没有生成任何上课记录。")
+        val manual = old.sessions.filter { it.manual }
+        val tt = old.copy(
+            sessions = (parsed + manual).sortedBy { it.start },
+            termStartEpochDay = termStart.toEpochDay(),
+            termWeeks = Zf.maxWeek(blocks).takeIf { it > 0 },
+            sourceLabel = "教务系统网页",
+            showWeekend = parsed.any { it.start.toLocalDate().dayOfWeek.value >= 6 },
+            zfBlocks = blocks
+        )
+        save(ctx, tt)
+        return tt
+    }
+
+    /**
+     * 换了作息表或者改了开学日期之后，用存下来的课程块原地重算上课时间。
+     * 手动条目不动。没有课程块（比如课表是从 ICS 导入的）就原样返回。
+     */
+    fun recomputeFromBlocks(tt: Timetable): Timetable {
+        if (tt.zfBlocks.isEmpty()) return tt
+        val termStart = tt.termStartEpochDay?.let { java.time.LocalDate.ofEpochDay(it) }
+            ?: return tt
+        val parsed = Zf.toSessions(tt.zfBlocks, termStart, tt.periods.ifEmpty { DEFAULT_PERIODS })
+        val manual = tt.sessions.filter { it.manual }
+        return tt.copy(sessions = (parsed + manual).sortedBy { it.start })
+    }
+
     /* ---------------- 抓来的教务系统网页 ---------------- */
 
     /** 存一份抓到的 HTML，用于导出给我调解析器。 */
