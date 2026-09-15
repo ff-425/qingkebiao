@@ -207,7 +207,8 @@ object Store {
             jwxtPage = pageUrl.ifBlank { old.jwxtPage },
             parserUsed = parser,
             periods = periods,
-            periodsSource = periodsSource
+            periodsSource = periodsSource,
+            lastSyncEpochDay = java.time.LocalDate.now().toEpochDay()
         )
         save(ctx, tt)
         return tt
@@ -217,6 +218,16 @@ object Store {
      * 换了作息表或者改了开学日期之后，用存下来的课程块原地重算上课时间。
      * 手动条目不动。没有课程块（比如课表是从 ICS 导入的）就原样返回。
      */
+    /**
+     * 记一笔"今天和教务系统对过了"。
+     * 抓到并比对过就算，不管最后有没有变动、用户有没有点应用 ——
+     * "多久没查了"问的是有没有查，不是有没有变。
+     */
+    suspend fun markSynced(ctx: Context) = withContext(Dispatchers.IO) {
+        val tt = load(ctx)
+        save(ctx, tt.copy(lastSyncEpochDay = java.time.LocalDate.now().toEpochDay()))
+    }
+
     fun recomputeFromBlocks(tt: Timetable): Timetable {
         if (tt.zfBlocks.isEmpty()) return tt
         val termStart = tt.termStartEpochDay?.let { java.time.LocalDate.ofEpochDay(it) }

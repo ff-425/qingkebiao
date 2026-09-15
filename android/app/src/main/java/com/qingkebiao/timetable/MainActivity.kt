@@ -144,6 +144,24 @@ private fun Home(pal: Palette, resumeTick: Int) {
     var showUpdate by remember { mutableStateOf(false) }
     val newVersion = rememberUpdateCheck(tt.updateUrl)
 
+    // 调课提醒。教务系统要登录才能看，没法真正后台静默查，
+    // 所以退而求其次：隔几天提醒一次，点一下就进去对。
+    var syncDismissed by remember { mutableStateOf(false) }
+    val daysSinceSync = remember(tt.lastSyncEpochDay) {
+        tt.lastSyncEpochDay?.let { LocalDate.now().toEpochDay() - it }
+    }
+    val syncDue = tt.jwxtPage.isNotBlank() && tt.syncRemindDays > 0 && !syncDismissed &&
+        (daysSinceSync == null || daysSinceSync >= tt.syncRemindDays)
+
+    fun openSync() {
+        ctx.startActivity(
+            Intent(ctx, WebImportActivity::class.java)
+                .putExtra(WebImportActivity.EXTRA_URL, tt.jwxtPage)
+                .putExtra(WebImportActivity.EXTRA_HOME, tt.jwxtHome)
+                .putExtra(WebImportActivity.EXTRA_HAS_TERM, true)
+        )
+    }
+
     // 首次打开先装示例，让人立刻看见这东西长什么样（不落盘，导入真课表即覆盖）
     LaunchedEffect(Unit) {
         val stored = Store.load(ctx)
@@ -261,6 +279,27 @@ private fun Home(pal: Palette, resumeTick: Int) {
                 }
                 HorizontalDivider(thickness = 1.dp, color = pal.rule)
             }
+        }
+
+        if (syncDue) {
+            Row(
+                Modifier.fillMaxWidth().background(pal.panel2)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    if (daysSinceSync == null) "还没和教务系统对过课表"
+                    else "已经 $daysSinceSync 天没查调课了",
+                    color = pal.ink2, fontSize = 12.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                OutlineChip(pal, "查一下") { openSync() }
+                Spacer(Modifier.width(6.dp))
+                OutlineChip(pal, "以后") { syncDismissed = true }
+            }
+            HorizontalDivider(thickness = 1.dp, color = pal.rule)
         }
 
         // 数据读不出来这种事必须说出来。静默变空是最坏的表现：
@@ -1036,25 +1075,41 @@ private fun SettingsDialog(
 
             if (d.tt.jwxtPage.isNotBlank()) {
                 Spacer(Modifier.height(22.dp))
-                Label(pal, "重新同步")
+                Label(pal, "查调课")
                 Hint(
                     pal,
-                    "直接打开上次出课表的那一页。登录状态通常还在，页面一加载就自动解析，" +
-                        "不用再从菜单里点进去。"
+                    "打开上次出课表的那一页，抓下来和现在这份比一遍，" +
+                        "把学校改动过的地方列出来，你确认了才写进去。" +
+                        "作息、开学日期、你手动加的课和调休记录都不会被动。"
                 )
                 Spacer(Modifier.height(8.dp))
+                FieldRow(
+                    pal, "上次对过",
+                    d.tt.lastSyncEpochDay?.let {
+                        val n = LocalDate.now().toEpochDay() - it
+                        if (n <= 0) "今天" else "$n 天前"
+                    } ?: "还没对过"
+                ) { Spacer(Modifier.width(0.dp)) }
+                FieldRow(
+                    pal, "隔几天提醒一次",
+                    if (d.tt.syncRemindDays <= 0) "关掉了，不提醒" else "首页会出一条提示"
+                ) {
+                    IntStepper(pal, d.tt.syncRemindDays, 0, 30, suffix = " 天") {
+                        onApply(d.tt.copy(syncRemindDays = it))
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
                 if (!confirmResync) {
-                    PrimaryButton(pal, "重新同步课表") { confirmResync = true }
+                    PrimaryButton(pal, "去查一下有没有调课") { confirmResync = true }
                 } else {
                     MsgBox(
                         pal,
-                        "重新同步会用教务系统上的课表覆盖现在这份。" +
-                            "你手动加的课和事件会保留，手动改过的那几节也保留；" +
-                            "其余导入来的都会按网页重来一遍。"
+                        "会打开教务系统那一页重新抓一次。抓完先把变动列给你看，" +
+                            "你点了「应用」才会改课表；直接关掉的话什么都不变。"
                     )
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        PrimaryButton(pal, "确认，去同步") {
+                        PrimaryButton(pal, "确认，去查") {
                             confirmResync = false
                             ctx.startActivity(
                                 Intent(ctx, WebImportActivity::class.java)

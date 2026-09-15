@@ -89,7 +89,11 @@ data class Timetable(
     /** 作息表是怎么来的：sniffed(从网页读到) / derived(按分组推算) / manual(用户改过) */
     val periodsSource: String = "",
     /** 检查更新的站点地址。空 = 不检查，一个网络请求都不会发。 */
-    val updateUrl: String = ""
+    val updateUrl: String = "",
+    /** 上次和教务系统对过课表的日期。用来提醒"好久没查调课了"。 */
+    val lastSyncEpochDay: Long? = null,
+    /** 隔几天提醒一次去查调课。0 = 不提醒。 */
+    val syncRemindDays: Int = 7
 )
 
 fun Long.toLocalDateTime(zone: ZoneId = ZoneId.systemDefault()): LocalDateTime =

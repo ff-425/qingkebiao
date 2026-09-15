@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -193,6 +194,15 @@ private fun WebImportScreen(
         else -> Periods.describe(groups) + "，不准就在设置里改"
     }
 
+    // 已经有课表时，这次抓到的就不是"导入"而是"对一遍有没有调课"。
+    // 差异比整张课表有用得多 —— 学校调一节课，用户要看的是那一节，不是全部 21 个块。
+    val oldBlocks = stored?.zfBlocks.orEmpty()
+    val isResync = oldBlocks.isNotEmpty()
+    val changes: List<Diff.Change> = remember(blocks, oldBlocks, effPeriods) {
+        val bs = blocks
+        if (bs == null || !isResync) emptyList() else Diff.compare(oldBlocks, bs, effPeriods)
+    }
+
     val saver = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/html")
     ) { uri ->
@@ -237,6 +247,8 @@ private fun WebImportScreen(
                     blocks = bs
                     parser = which
                     err = false
+                    // 抓到并比对过就算查过了，不管有没有变动、用户点不点应用
+                    if (oldBlocks.isNotEmpty()) scope.launch { Store.markSynced(ctx) }
                     msg = buildString {
                         append(if (which == "zf") "正方课表解析成功：" else "通用表格解析（尽力而为）：")
                         append("${Zf.courseCount(bs)} 门课、${bs.size} 个课程块、")
@@ -352,18 +364,61 @@ private fun WebImportScreen(
                     // 解析结果先给用户看。通用解析是猜的，这个预览就是安全阀。
                     blocks?.takeIf { !imported }?.let { bs ->
                         val dow = "一二三四五六日"
-                        bs.sortedWith(compareBy({ it.weekday }, { it.startPeriod })).take(6).forEach { b ->
-                            Text(
-                                "周${dow[b.weekday - 1]} ${b.startPeriod}-${b.endPeriod}节 " +
-                                    periodRange(b.startPeriod, b.endPeriod, effPeriods) +
-                                    "  ${b.title}" +
-                                    (if (b.location.isNotBlank()) "  ${b.location}" else ""),
-                                color = pal.ink2, fontSize = 11.5.sp,
-                                fontFamily = FontFamily.Monospace, maxLines = 1
-                            )
-                        }
-                        if (bs.size > 6) {
-                            Text("…… 还有 ${bs.size - 6} 个", color = pal.faint, fontSize = 11.sp)
+
+                        if (isResync) {
+                            // 重新同步：只列变动。没变动就明说没变动，别让人自己去比。
+                            if (changes.isEmpty()) {
+                                Text(
+                                    "和现在的课表一样，没有调课。",
+                                    color = pal.ink2, fontSize = 12.5.sp
+                                )
+                            } else {
+                                Text(
+                                    "教务系统上的课表变了：${Diff.summarize(changes)}",
+                                    color = pal.signal, fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                changes.take(8).forEach { c ->
+                                    Text(
+                                        "【${Diff.label(c.kind)}】${c.title}",
+                                        color = pal.ink, fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold, maxLines = 1
+                                    )
+                                    if (c.before.isNotBlank()) {
+                                        Text(
+                                            "  原：${c.before}",
+                                            color = pal.faint, fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace, maxLines = 1
+                                        )
+                                    }
+                                    if (c.after.isNotBlank()) {
+                                        Text(
+                                            "  现：${c.after}",
+                                            color = pal.ink2, fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace, maxLines = 1
+                                        )
+                                    }
+                                    Spacer(Modifier.height(4.dp))
+                                }
+                                if (changes.size > 8) {
+                                    Text("…… 还有 ${changes.size - 8} 处", color = pal.faint, fontSize = 11.sp)
+                                }
+                            }
+                        } else {
+                            bs.sortedWith(compareBy({ it.weekday }, { it.startPeriod })).take(6).forEach { b ->
+                                Text(
+                                    "周${dow[b.weekday - 1]} ${b.startPeriod}-${b.endPeriod}节 " +
+                                        periodRange(b.startPeriod, b.endPeriod, effPeriods) +
+                                        "  ${b.title}" +
+                                        (if (b.location.isNotBlank()) "  ${b.location}" else ""),
+                                    color = pal.ink2, fontSize = 11.5.sp,
+                                    fontFamily = FontFamily.Monospace, maxLines = 1
+                                )
+                            }
+                            if (bs.size > 6) {
+                                Text("…… 还有 ${bs.size - 6} 个", color = pal.faint, fontSize = 11.sp)
+                            }
                         }
                         Spacer(Modifier.height(8.dp))
 
@@ -387,7 +442,12 @@ private fun WebImportScreen(
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (blocks != null && !imported) {
-                            PrimaryButton(pal, "导入课表") {
+                            val applyLabel = when {
+                                !isResync -> "导入课表"
+                                changes.isEmpty() -> "没有变动，仍然覆盖"
+                                else -> "应用这 ${changes.size} 处变动"
+                            }
+                            PrimaryButton(pal, applyLabel) {
                                 scope.launch {
                                     runCatching {
                                         Store.importZf(
@@ -405,8 +465,13 @@ private fun WebImportScreen(
                                             err = false
                                             // 作息到底是哪来的，下面那行 periodsNote 会实时显示，
                                             // 这里别再写死一句"按内置作息表"跟它打架
-                                            msg = "已导入 ${tt.sessions.size} 节课。" +
-                                                "时间对不上就到设置里改「节次时间」，改完会自动重算。"
+                                            msg = if (isResync) {
+                                                "已更新：${Diff.summarize(changes)}。" +
+                                                    "作息、开学日期、你手动加的课和调休记录都没动。"
+                                            } else {
+                                                "已导入 ${tt.sessions.size} 节课。" +
+                                                    "时间对不上就到设置里改「节次时间」，改完会自动重算。"
+                                            }
                                         },
                                         onFailure = { e -> err = true; msg = "导入失败：${e.message}" }
                                     )
@@ -423,7 +488,11 @@ private fun WebImportScreen(
                     Spacer(Modifier.height(6.dp))
                     Hint(
                         pal,
-                        if (imported) "导入完成，可以关掉这个页面了。"
+                        if (imported) "完成，可以关掉这个页面了。"
+                        else if (blocks != null && isResync && changes.isEmpty())
+                            "没有调课，不用做任何事，直接关掉就行。"
+                        else if (blocks != null && isResync)
+                            "看一下这些变动对不对，确认了再点应用。不想现在改就直接关掉，课表保持原样。"
                         else if (blocks != null) "确认上面的预览没问题就点「导入课表」。"
                         else "在上面登录，点到课表页面 —— 课表一显示出来就会自动解析，" +
                             "不用手动点。没反应再点「抓取本页课表」。"
