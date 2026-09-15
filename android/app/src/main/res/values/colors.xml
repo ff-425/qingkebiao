@@ -9,4 +9,10 @@
     <color name="icon_red">#D9536A</color>
     <color name="icon_teal">#3FA894</color>
     <color name="icon_amber">#D8A23E</color>
+
+    <!-- 小组件预览图用，和 Widgets.kt 里的 ColorProvider 对齐 -->
+    <color name="widget_bg">#FAFBFA</color>
+    <color name="widget_ink">#111614</color>
+    <color name="widget_sub">#69736F</color>
+    <color name="widget_faint">#96A09C</color>
 </resources>

@@ -19,9 +19,23 @@ android {
         versionName = "1.0"
     }
 
+    // 固定的 debug 签名。默认行为是用 ~/.android/debug.keystore，而 CI runner
+    // 每次都是全新环境、每次生成的 key 都不同 —— 结果是两次构建出来的包互相装不上，
+    // 每次更新都要先卸载、数据全丢。把 keystore 放进仓库，本地和 CI 就永远一致。
+    // 这是 debug 签名，口令是众所周知的 android，不用于任何发布用途。
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("../debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
         release {
             isMinifyEnabled = false

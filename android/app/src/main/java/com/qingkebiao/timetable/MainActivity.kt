@@ -547,7 +547,8 @@ private fun DayColumn(
             val en = minOf(hi, s.endMinute())
             val h = (minuteDp * (en - st) - 2.dp).coerceAtLeast(18.dp)
             val hue = hues[s.title] ?: 0f
-            val alpha = if (s.end < now) 0.45f else 1f
+            // 暗色底上 0.45 会把已过的课压到几乎看不见，单独抬一档
+            val alpha = if (s.end < now) pastAlpha(pal) else 1f
 
             Box(
                 Modifier
@@ -654,7 +655,7 @@ private fun DayList(
                 items(items) { s ->
                     val live = now in s.start until s.end
                     val soon = !live && s.start > now && s.start - now < 45 * 60_000
-                    val alpha = if (s.end < now) 0.45f else 1f
+                    val alpha = if (s.end < now) pastAlpha(pal) else 1f
                     val hue = hues[s.title] ?: 0f
 
                     Column(Modifier.fillMaxWidth().clickable { onPick(s) }) {

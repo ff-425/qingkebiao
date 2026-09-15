@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 同上：只用 RemoteViews 支持的控件 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="horizontal" android:gravity="center_vertical"
+    android:background="@drawable/widget_preview_bg"
+    android:paddingLeft="12dp" android:paddingRight="12dp"
+    android:paddingTop="10dp" android:paddingBottom="10dp">
+
+    <ImageView
+        android:layout_width="3dp" android:layout_height="34dp"
+        android:layout_marginEnd="9dp"
+        android:background="@color/signal"
+        android:contentDescription="@null" />
+    <LinearLayout
+        android:layout_width="0dp" android:layout_height="wrap_content"
+        android:layout_weight="1" android:orientation="vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="数据结构" android:textSize="14sp" android:textStyle="bold"
+            android:textColor="@color/widget_ink" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="25 分钟后 · 逸夫楼-402" android:textSize="11sp"
+            android:textColor="@color/widget_sub" />
+    </LinearLayout>
+</LinearLayout>

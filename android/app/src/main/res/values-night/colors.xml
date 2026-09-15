@@ -3,4 +3,9 @@
     <color name="paper">#101312</color>
     <color name="ink">#E4E8E6</color>
     <color name="signal">#FF5A4D</color>
+
+    <color name="widget_bg">#171B1A</color>
+    <color name="widget_ink">#E4E8E6</color>
+    <color name="widget_sub">#8B9490</color>
+    <color name="widget_faint">#646D6A</color>
 </resources>

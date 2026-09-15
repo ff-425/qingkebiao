@@ -99,9 +99,11 @@ fun SessionEditorDialog(
 
             Spacer(Modifier.height(18.dp))
             Label(pal, "时间")
-            FieldRow(pal, "日期", if (d.weeks > 0) "第 ${d.weekOf(date)} 周" else null) {
-                Spacer(Modifier.width(0.dp))
-            }
+            Text(
+                "日期" + if (d.weeks > 0) "  ·  第 ${d.weekOf(date)} 周" else "",
+                color = pal.ink2, fontSize = 13.sp
+            )
+            Spacer(Modifier.height(6.dp))
             DateStepper(pal, date) { date = it }
 
             Spacer(Modifier.height(10.dp))

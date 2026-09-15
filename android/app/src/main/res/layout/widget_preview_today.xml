@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件选择器里的静态预览（API 31+ 的 previewLayout）。真正的渲染由 Glance 负责。
+     注意：这里只能用 RemoteViews 白名单内的控件 —— Space 和裸 View 都不行，
+     用了会让启动器显示 "Can't load widget"。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="@drawable/widget_preview_bg"
+    android:paddingLeft="12dp" android:paddingRight="12dp"
+    android:paddingTop="10dp" android:paddingBottom="10dp">
+
+    <LinearLayout
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:layout_marginBottom="7dp">
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:text="周二 09-15"
+            android:textSize="13sp" android:textStyle="bold" android:textColor="@color/widget_ink" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="第 3 周 · 3 节" android:textSize="10sp" android:textColor="@color/widget_faint" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:paddingTop="4dp" android:paddingBottom="4dp">
+        <ImageView
+            android:layout_width="3dp" android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:background="@color/icon_teal"
+            android:contentDescription="@null" />
+        <LinearLayout
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:orientation="vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="线性代数" android:textSize="13sp" android:textColor="@color/widget_faint" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="教三-105" android:textSize="10sp" android:textColor="@color/widget_faint" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:orientation="vertical" android:gravity="end">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="08:00" android:textSize="11sp" android:textColor="@color/widget_faint" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="09:40" android:textSize="10sp" android:textColor="@color/widget_faint" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:paddingTop="4dp" android:paddingBottom="4dp">
+        <ImageView
+            android:layout_width="3dp" android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:background="@color/signal"
+            android:contentDescription="@null" />
+        <LinearLayout
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:orientation="vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="数据结构" android:textSize="13sp" android:textColor="@color/widget_ink" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="逸夫楼-402" android:textSize="10sp" android:textColor="@color/widget_sub" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:orientation="vertical" android:gravity="end">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="10:00" android:textSize="11sp" android:textColor="@color/widget_sub" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="11:40" android:textSize="10sp" android:textColor="@color/widget_faint" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:paddingTop="4dp" android:paddingBottom="4dp">
+        <ImageView
+            android:layout_width="3dp" android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:background="@color/icon_amber"
+            android:contentDescription="@null" />
+        <LinearLayout
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:orientation="vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="马克思主义基本原理" android:textSize="13sp" android:textColor="@color/widget_ink" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="教一-201" android:textSize="10sp" android:textColor="@color/widget_sub" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:orientation="vertical" android:gravity="end">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="19:00" android:textSize="11sp" android:textColor="@color/widget_sub" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="20:40" android:textSize="10sp" android:textColor="@color/widget_faint" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

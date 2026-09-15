@@ -64,5 +64,11 @@ fun blockFill(hue: Float, dark: Boolean): Color =
 fun blockEdge(hue: Float, dark: Boolean): Color =
     if (dark) Color.hsl(hue, 0.56f, 0.56f) else Color.hsl(hue, 0.52f, 0.48f)
 
+/**
+ * 已经上完的课降透明度。0.45 在浅色底上正好，但压在深色底上几乎看不见，
+ * 所以暗色模式抬高一档。这是在模拟器上切暗色实际看出来的。
+ */
+fun pastAlpha(pal: Palette): Float = if (pal.dark) 0.58f else 0.45f
+
 fun blockText(hue: Float, dark: Boolean): Color =
     if (dark) Color.hsl(hue, 0.62f, 0.84f) else Color.hsl(hue, 0.46f, 0.24f)
