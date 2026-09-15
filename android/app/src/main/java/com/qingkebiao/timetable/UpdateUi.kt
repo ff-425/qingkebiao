@@ -156,7 +156,8 @@ fun UpdateSheet(
                     Column {
                         Text(
                             "v${m.versionName.ifBlank { m.versionCode.toString() }}" +
-                                if (m.size > 0) "   ${m.size / 1024 / 1024} MB" else "",
+                                // 整除会把 10.9 MB 显示成 10 MB，看着像少了一截
+                                if (m.size > 0) "   %.1f MB".format(m.size / 1048576.0) else "",
                             color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                             fontFamily = FontFamily.Monospace
                         )
