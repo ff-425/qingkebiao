@@ -20,6 +20,7 @@ import java.net.URL
 object Store {
 
     private const val FILE_NAME = "timetable.json"
+    private const val HTML_NAME = "captured.html"
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -78,27 +79,65 @@ object Store {
         }
     }
 
-    /** 导入一段 ICS 文本并落盘。周末一节课都没有就默认收起周末两列。 */
+    /**
+     * 把新解析出来的课程并进现有课表。
+     *
+     * 关键点：手动添加/改过的课（manual = true）一律保留，只替换导入来的部分。
+     * 学期起始日、总周数、调休、节次时间这些用户设置也全部保留 ——
+     * 重新拉一次课表不应该把这些手工调整清零。
+     */
+    suspend fun mergeImported(
+        ctx: Context,
+        parsed: List<Session>,
+        sourceLabel: String,
+        icsUrl: String = ""
+    ): Timetable {
+        val old = load(ctx)
+        val manual = old.sessions.filter { it.manual }
+        val merged = (parsed.map { if (it.id.isBlank()) it.copy(id = newId()) else it } + manual)
+            .sortedBy { it.start }
+        val firstImport = old.sessions.none { !it.manual }
+        val hasWeekend = merged.any { it.start.toLocalDate().dayOfWeek.value >= 6 }
+
+        val tt = old.copy(
+            sessions = merged,
+            sourceLabel = sourceLabel,
+            icsUrl = if (icsUrl.isNotBlank()) icsUrl else old.icsUrl,
+            // 只在第一次导入时自动决定要不要显示周末，之后尊重用户的选择
+            showWeekend = if (firstImport) hasWeekend else old.showWeekend
+        )
+        save(ctx, tt)
+        return tt
+    }
+
+    /** ICS 文本 → 课表。 */
     suspend fun importIcs(
         ctx: Context,
         text: String,
         sourceLabel: String,
         icsUrl: String = ""
-    ): Timetable {
-        val sessions = Ics.parse(text)
-        val hasWeekend = sessions.any {
-            val dow = it.start.toLocalDate().dayOfWeek.value
-            dow == 6 || dow == 7
-        }
-        val tt = Timetable(
-            sessions = sessions,
-            termStartEpochDay = null,          // 重新自动推算
-            showWeekend = hasWeekend,
-            sourceLabel = sourceLabel,
-            icsUrl = icsUrl
-        )
-        save(ctx, tt)
-        return tt
+    ): Timetable = mergeImported(ctx, Ics.parse(text), sourceLabel, icsUrl)
+
+    /* ---------------- 抓来的教务系统网页 ---------------- */
+
+    /** 存一份抓到的 HTML，用于导出给我调解析器。 */
+    suspend fun saveCapturedHtml(ctx: Context, html: String) = withContext(Dispatchers.IO) {
+        File(ctx.filesDir, HTML_NAME).writeText(html)
+        Unit
+    }
+
+    suspend fun loadCapturedHtml(ctx: Context): String? = withContext(Dispatchers.IO) {
+        val f = File(ctx.filesDir, HTML_NAME)
+        if (f.exists() && f.length() > 0) f.readText() else null
+    }
+
+    /** 导出到 cacheDir，供系统分享菜单发出去。 */
+    suspend fun exportCapturedHtml(ctx: Context): File? = withContext(Dispatchers.IO) {
+        val html = loadCapturedHtml(ctx) ?: return@withContext null
+        val dir = File(ctx.cacheDir, "share").apply { mkdirs() }
+        val out = File(dir, "jwxt-page.html")
+        out.writeText(html)
+        out
     }
 }
 

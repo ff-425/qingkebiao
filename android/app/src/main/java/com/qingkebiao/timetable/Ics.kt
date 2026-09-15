@@ -312,6 +312,7 @@ object Ics {
                 if (ms in skip) continue
                 out.add(
                     Session(
+                        id = newId(),
                         title = e.title.trim().ifBlank { "未命名" },
                         location = e.location.trim(),
                         teacher = teacher,

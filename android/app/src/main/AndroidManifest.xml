@@ -8,6 +8,7 @@
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="false"
@@ -23,6 +24,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 教务系统导入：内置浏览器，用户自己登录后抓页面 -->
+        <activity
+            android:name=".WebImportActivity"
+            android:exported="false"
+            android:label="教务系统导入"
+            android:windowSoftInputMode="adjustResize" />
 
         <!-- 今日课表小组件 -->
         <receiver
