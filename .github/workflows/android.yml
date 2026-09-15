@@ -2,7 +2,7 @@ name: Build APK
 
 # 每次推到 main 就出一个 APK，并更新 latest 这个 Release，
 # 于是手机上永远有一个固定的下载直链：
-#   https://github.com/<你的用户名>/<仓库名>/releases/latest/download/qingkebiao.apk
+#   https://github.com/<用户名>/<仓库名>/releases/latest/download/qingkebiao.apk
 on:
   push:
     branches: [main]
@@ -46,11 +46,44 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      # continue-on-error 是为了让下一步有机会把日志捞出来，
+      # 真正的成败判定在"构建失败就停下"那一步。
       - name: 编译
+        id: build
+        continue-on-error: true
         working-directory: android
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 \
+            | tee "$GITHUB_WORKSPACE/build.log"
+
+      # 公开仓库的 Actions 日志，用 API 下载仍要仓库 admin 令牌。
+      # 所以失败时把日志发布成公开 Release 资产 —— 普通 curl 就能读，
+      # 排错时不用来回复制粘贴。构建成功后这一步不会执行。
+      - name: 失败时发布编译日志
+        if: steps.build.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 先过滤出真正有用的行：Kotlin 报错是 "e: file:///..." 这种格式
+          grep -nE "^e: |^w: |error:|Compilation error|FAILURE:|What went wrong|Caused by:|Unresolved reference|Type mismatch|No value passed" \
+            build.log | head -300 > build-errors.txt || true
+          echo "--- 错误行数: $(wc -l < build-errors.txt) ---"
+          tail -c 150000 build.log > build-tail.log
+          gh release delete build-log --yes --cleanup-tag 2>/dev/null || true
+          gh release create build-log build-errors.txt build-tail.log \
+            --title "最近一次构建日志（排错用）" \
+            --notes "自动上传，仅在编译失败时产生。构建转绿后可以删掉这个 Release。" \
+            --prerelease
+
+      - name: 构建失败就停下
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "编译失败，日志已发布到 build-log Release。"
+          exit 1
 
       - name: 改个好认的文件名
+        if: steps.build.outcome == 'success'
         run: |
           mkdir -p out
           cp android/app/build/outputs/apk/debug/app-debug.apk out/qingkebiao.apk
@@ -58,6 +91,7 @@ jobs:
 
       # 每次构建都留一份，方便回看历史版本
       - name: 上传构建产物
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: qingkebiao-apk
@@ -66,7 +100,7 @@ jobs:
 
       # 手机上用的固定直链就靠这一步
       - name: 更新 latest Release
-        if: github.ref == 'refs/heads/main'
+        if: steps.build.outcome == 'success' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -75,3 +109,5 @@ jobs:
             --title "清课表 最新构建" \
             --notes "提交 ${GITHUB_SHA::7} 自动构建。手机浏览器直接点下面的 qingkebiao.apk 下载安装。" \
             --prerelease
+          # 编译转绿了，把排错用的日志 Release 收掉
+          gh release delete build-log --yes --cleanup-tag 2>/dev/null || true
