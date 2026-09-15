@@ -1,0 +1,186 @@
+package com.qingkebiao.timetable
+
+/**
+ * 通用课表表格解析（兜底）。
+ *
+ * 国内教务系统有正方、强智、青果、URP 等好几家，页面结构完全不同，没有万能解析器。
+ * [Zf] 是针对正方写的、结构化的、可靠的；这里是它认不出时的兜底：
+ * 按"表格 + 星期表头 + 节次行"这个几乎所有课表都有的形态去猜。
+ *
+ * 明确是尽力而为，所以调用方**必须**先把结果给用户看再导入 —— 猜错了用户一眼
+ * 能看出来，不会把垃圾写进课表。
+ *
+ * 唯一不靠猜的部分是表格展开：rowspan/colspan 按 HTML 表格语义还原成网格，
+ * 这是确定的规则。连堂课通常就是靠 rowspan 合并的，不展开就对不上列。
+ */
+object Generic {
+
+    class ParseException(message: String) : Exception(message)
+
+    private fun opts() = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    private val TABLE = Regex("""<table\b[^>]*>(.*?)</table>""", opts())
+    private val ROW = Regex("""<tr\b[^>]*>(.*?)</tr>""", opts())
+    private val CELL = Regex("""<t([dh])\b([^>]*)>(.*?)</t\1>""", opts())
+    private val SPAN_ATTR = { name: String -> Regex("""$name\s*=\s*["']?(\d+)""", RegexOption.IGNORE_CASE) }
+    private val BR = Regex("""<br\s*/?>|</p>|</div>|</li>""", opts())
+    private val TAG = Regex("""<[^>]+>""")
+    private val WS_LINE = Regex("""[ \t ]+""")
+
+    private val WEEKDAYS = listOf("一", "二", "三", "四", "五", "六", "日", "天")
+
+    private fun unescape(s: String) = s
+        .replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">")
+        .replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&")
+
+    /** 把单元格内容拆成若干行文本：<br>/</p>/</div> 都当换行。 */
+    private fun cellLines(html: String): List<String> =
+        BR.replace(html, "\n")
+            .let { TAG.replace(it, "") }
+            .let { unescape(it) }
+            .split('\n')
+            .map { WS_LINE.replace(it, " ").trim() }
+            .filter { it.isNotEmpty() }
+
+    private fun plain(html: String) = cellLines(html).joinToString(" ")
+
+    private class Cell(val html: String, val text: String)
+
+    /**
+     * 把一张表展开成规整网格，rowspan/colspan 都落到实际占据的每个位置。
+     * 这是 HTML 表格的确定语义，不是启发式。
+     */
+    private fun toGrid(tableInner: String): List<MutableList<Cell?>> {
+        val grid = ArrayList<MutableList<Cell?>>()
+        fun rowAt(r: Int): MutableList<Cell?> {
+            while (grid.size <= r) grid.add(ArrayList())
+            return grid[r]
+        }
+        for ((r, rowM) in ROW.findAll(tableInner).withIndex()) {
+            var c = 0
+            for (cm in CELL.findAll(rowM.groupValues[1])) {
+                val attrs = cm.groupValues[2]
+                val inner = cm.groupValues[3]
+                val rs = SPAN_ATTR("rowspan").find(attrs)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                val cs = SPAN_ATTR("colspan").find(attrs)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                // 跳过已被上方 rowspan 占掉的位置
+                while (c < rowAt(r).size && rowAt(r)[c] != null) c++
+                val cell = Cell(inner, plain(inner))
+                for (dr in 0 until rs.coerceIn(1, 30)) {
+                    val rr = rowAt(r + dr)
+                    for (dc in 0 until cs.coerceIn(1, 30)) {
+                        val cc = c + dc
+                        while (rr.size <= cc) rr.add(null)
+                        if (rr[cc] == null) rr[cc] = cell
+                    }
+                }
+                c += cs
+            }
+        }
+        return grid
+    }
+
+    /** 某一行里，哪几列是星期几。返回 列索引 -> 1..7 */
+    private fun weekdayColumns(row: List<Cell?>): Map<Int, Int> {
+        val out = HashMap<Int, Int>()
+        for ((i, cell) in row.withIndex()) {
+            val t = cell?.text?.replace(" ", "") ?: continue
+            if (t.length > 8) continue
+            if (!t.contains("星期") && !t.contains("周")) continue
+            val ch = t.lastOrNull()?.toString() ?: continue
+            val idx = WEEKDAYS.indexOf(ch)
+            if (idx >= 0) out[i] = if (idx == 7) 7 else idx + 1   // "天" 当周日
+        }
+        return out
+    }
+
+    private val PERIOD_IN_TEXT = Regex("""(\d+)\s*[-–~]\s*(\d+)\s*节""")
+    private val SINGLE_PERIOD = Regex("""第?\s*(\d+)\s*节""")
+    private val LEADING_NUM = Regex("""^\s*(\d{1,2})\s*$""")
+    private val WEEK_TEXT = Regex("""[\d,，\-－~至到单双周()（）]{2,}周""")
+    private val PLACE_HINT = Regex("""[楼馆室厅场院区舍]|机房|教\d|实验|中心|校区""")
+    private val CJK_NAME = Regex("""^[一-龥·]{2,4}(?:[,，、][一-龥·]{2,4})*$""")
+
+    fun parse(html: String, defaultWeeks: Int = 18): List<Zf.Block> {
+        // 选星期表头最多的那张表
+        val best = TABLE.findAll(html)
+            .map { it.groupValues[1] }
+            .maxByOrNull { inner -> WEEKDAYS.count { d -> inner.contains("星期$d") || inner.contains("周$d") } }
+            ?: throw ParseException("页面里没有表格。")
+
+        val grid = toGrid(best)
+        var headerRow = -1
+        var cols: Map<Int, Int> = emptyMap()
+        for ((r, row) in grid.withIndex()) {
+            val m = weekdayColumns(row)
+            if (m.size >= 3) { headerRow = r; cols = m; break }
+        }
+        if (headerRow < 0) throw ParseException("找不到「星期一…星期日」这样的表头，没法判断哪一列是星期几。")
+
+        val out = ArrayList<Zf.Block>()
+        val seen = HashSet<String>()
+        var rowPeriod = 0
+
+        for (r in (headerRow + 1) until grid.size) {
+            val row = grid[r]
+            // 前面几列里的纯数字当作节次
+            val lead = (0 until minOf(row.size, 3))
+                .mapNotNull { i -> row[i]?.text?.let { LEADING_NUM.find(it)?.groupValues?.get(1)?.toIntOrNull() } }
+                .firstOrNull()
+            if (lead != null) rowPeriod = lead else rowPeriod++
+
+            for ((ci, weekday) in cols) {
+                val cell = row.getOrNull(ci) ?: continue
+                val lines = cellLines(cell.html)
+                if (lines.isEmpty()) continue
+
+                // 同一个 cell 因为 rowspan 会在多行重复出现，去重
+                val key = "$weekday|${cell.text}"
+                if (cell.text.isBlank() || !seen.add(key)) continue
+
+                val joined = lines.joinToString(" ")
+                val weeksRaw = WEEK_TEXT.find(joined)?.value ?: ""
+                val weeks = Zf.parseWeeks(weeksRaw).ifEmpty { (1..defaultWeeks).toList() }
+
+                val pm = PERIOD_IN_TEXT.find(joined)
+                val p1: Int
+                val p2: Int
+                if (pm != null) {
+                    p1 = pm.groupValues[1].toInt(); p2 = pm.groupValues[2].toInt()
+                } else {
+                    val sp = SINGLE_PERIOD.find(joined)?.groupValues?.get(1)?.toIntOrNull()
+                    p1 = sp ?: rowPeriod
+                    p2 = p1
+                }
+                if (p1 < 1 || p1 > 30) continue
+
+                // 逐行判定：地点 / 教师 / 其余最长的当课程名
+                var place = ""
+                var teacher = ""
+                val rest = ArrayList<String>()
+                for (l in lines) {
+                    when {
+                        l === lines.first() -> rest.add(l)              // 第一行几乎总是课程名
+                        WEEK_TEXT.containsMatchIn(l) || PERIOD_IN_TEXT.containsMatchIn(l) -> Unit
+                        place.isEmpty() && PLACE_HINT.containsMatchIn(l) -> place = l
+                        teacher.isEmpty() && CJK_NAME.matches(l) -> teacher = l
+                        else -> rest.add(l)
+                    }
+                }
+                val title = rest.maxByOrNull { it.length }?.take(40)?.trim().orEmpty()
+                if (title.isBlank() || title.length < 2) continue
+
+                out.add(
+                    Zf.Block(
+                        title = title, kind = "", weekday = weekday,
+                        startPeriod = p1, endPeriod = maxOf(p1, p2),
+                        weeks = weeks, weeksRaw = weeksRaw.ifBlank { "未标注周次，按 1-$defaultWeeks 周" },
+                        location = place, locationFull = place,
+                        teacher = teacher, credits = "", classCode = ""
+                    )
+                )
+            }
+        }
+        if (out.isEmpty()) throw ParseException("表格找到了，但没认出任何课程。")
+        return out
+    }
+}

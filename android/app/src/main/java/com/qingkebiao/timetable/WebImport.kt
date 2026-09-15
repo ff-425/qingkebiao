@@ -59,6 +59,9 @@ class WebImportActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_URL = "start_url"
+        /** 已经知道开学日期就不必再问"今天是第几周" */
+        const val EXTRA_HAS_TERM = "has_term"
+        const val EXTRA_HOME = "home_url"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,7 +69,9 @@ class WebImportActivity : ComponentActivity() {
         enableEdgeToEdge()
         val start = intent.getStringExtra(EXTRA_URL)?.takeIf { it.isNotBlank() }
             ?: "https://www.baidu.com"
-        setContent { WebImportScreen(start) { finish() } }
+        val hasTerm = intent.getBooleanExtra(EXTRA_HAS_TERM, false)
+        val home = intent.getStringExtra(EXTRA_HOME).orEmpty()
+        setContent { WebImportScreen(start, hasTerm, home) { finish() } }
     }
 }
 
@@ -138,7 +143,12 @@ private const val GRAB_JS = """
 """
 
 @Composable
-private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
+private fun WebImportScreen(
+    startUrl: String,
+    hasTerm: Boolean,
+    homeUrl: String,
+    onFinish: () -> Unit
+) {
     val dark = isSystemInDarkTheme()
     val pal = remember(dark) { if (dark) DarkPalette else LightPalette }
     val scheme = remember(pal) {
@@ -155,8 +165,11 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
     var err by remember { mutableStateOf(false) }
     var captured by remember { mutableStateOf<String?>(null) }
     var blocks by remember { mutableStateOf<List<Zf.Block>?>(null) }
+    var parser by remember { mutableStateOf("") }
     var currentWeek by remember { mutableIntStateOf(1) }
+    var askWeek by remember { mutableStateOf(!hasTerm) }
     var imported by remember { mutableStateOf(false) }
+    var autoTried by remember { mutableStateOf("") }
 
     val saver = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/html")
@@ -170,37 +183,47 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
         }
     }
 
-    fun capture() {
+    fun capture(auto: Boolean = false) {
         val wv = webView ?: return
-        msg = "抓取中…"
+        if (!auto) msg = "抓取中…"
         wv.evaluateJavascript(GRAB_JS) { raw ->
             // evaluateJavascript 回来的是 JSON 字面量，要先解引号和反转义
             val html = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()
             if (html.isNullOrBlank() || html.length < 200) {
-                msg = "没抓到有效内容。确认页面已经显示出课表了再抓。"
+                if (!auto) msg = "没抓到有效内容。确认页面已经显示出课表了再抓。"
                 return@evaluateJavascript
             }
             captured = html
             scope.launch { Store.saveCapturedHtml(ctx, html) }
 
-            // 直接就地解析。解析成功就不用再存文件发给谁了。
-            val r = runCatching { Zf.parse(html) }
-            r.fold(
-                onSuccess = { bs ->
+            // 先用正方的结构化解析；认不出再退到通用表格兜底。
+            // 通用解析是猜的，所以下面会先把结果预览给用户，由他确认再导入。
+            val zf = runCatching { Zf.parse(html) }
+            val res = if (zf.isSuccess) zf.map { it to "zf" }
+            else runCatching { Generic.parse(html) }.map { it to "generic" }
+
+            res.fold(
+                onSuccess = { (bs, which) ->
                     blocks = bs
+                    parser = which
                     err = false
-                    msg = "解析成功：${Zf.courseCount(bs)} 门课、${bs.size} 个课程块、" +
-                        "共 ${bs.sumOf { b -> b.weeks.size }} 次上课，最大第 ${Zf.maxWeek(bs)} 周。\n" +
-                        "下面确认「今天是第几周」就能导入。"
+                    msg = buildString {
+                        append(if (which == "zf") "正方课表解析成功：" else "通用表格解析（尽力而为）：")
+                        append("${Zf.courseCount(bs)} 门课、${bs.size} 个课程块、")
+                        append("共 ${bs.sumOf { b -> b.weeks.size }} 次上课，最大第 ${Zf.maxWeek(bs)} 周。")
+                        if (which == "generic") {
+                            append("\n这不是已知的教务系统，结果是猜的 —— 先看下面的预览对不对再导入。")
+                        }
+                    }
                 },
                 onFailure = { e ->
                     blocks = null
-                    err = true
-                    val jsonCount = Regex("<!-- XHR-JSON ").findAll(html).count()
-                    msg = "抓到 ${html.length / 1024} KB" +
-                        (if (jsonCount > 0) "（含 $jsonCount 段接口 JSON）" else "") +
-                        "，但没解析出课表：${e.message}\n" +
-                        "可以点「保存 HTML」存下来发我看。"
+                    parser = ""
+                    if (!auto) {
+                        err = true
+                        msg = "抓到 ${html.length / 1024} KB，但没认出课表：${e.message}" +
+                            "\n如果这页确实是课表，点「保存 HTML」发我，我给这套系统加一个解析器。"
+                    }
                 }
             )
         }
@@ -260,6 +283,12 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
 
                                     override fun onPageFinished(view: WebView?, url: String?) {
                                         view?.evaluateJavascript(INJECT_JS, null)
+                                        // 页面稳定后自动试解析一次：课表页一加载出来就直接出结果，
+                                        // 不用用户再去找"抓取"按钮。同一个 url 只自动试一次。
+                                        if (url != null && url != autoTried && blocks == null) {
+                                            autoTried = url
+                                            view?.postDelayed({ capture(auto = true) }, 1200)
+                                        }
                                     }
 
                                     override fun doUpdateVisitedHistory(
@@ -282,14 +311,35 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
                         Spacer(Modifier.height(8.dp))
                     }
 
-                    // 课表页只给"第几周"，不给日期。问一句今天是第几周就能定住整个学期。
-                    if (blocks != null && !imported) {
-                        FieldRow(
-                            pal, "今天是第几周",
-                            "教务系统只给周次不给日期，靠这个反推开学日期"
-                        ) {
-                            IntStepper(pal, currentWeek, 1, Zf.maxWeek(blocks!!).coerceAtLeast(1), suffix = " 周") {
-                                currentWeek = it
+                    // 解析结果先给用户看。通用解析是猜的，这个预览就是安全阀。
+                    blocks?.takeIf { !imported }?.let { bs ->
+                        val dow = "一二三四五六日"
+                        bs.sortedWith(compareBy({ it.weekday }, { it.startPeriod })).take(6).forEach { b ->
+                            Text(
+                                "周${dow[b.weekday - 1]} ${b.startPeriod}-${b.endPeriod}节  ${b.title}" +
+                                    (if (b.location.isNotBlank()) "  ${b.location}" else ""),
+                                color = pal.ink2, fontSize = 11.5.sp,
+                                fontFamily = FontFamily.Monospace, maxLines = 1
+                            )
+                        }
+                        if (bs.size > 6) {
+                            Text("…… 还有 ${bs.size - 6} 个", color = pal.faint, fontSize = 11.sp)
+                        }
+                        Spacer(Modifier.height(8.dp))
+
+                        // 学期起点只在还没定过的时候问一次，之后重新同步不再打扰
+                        if (askWeek) {
+                            FieldRow(
+                                pal, "今天是第几周",
+                                "教务系统只给周次不给日期，靠这个反推开学日期"
+                            ) {
+                                IntStepper(pal, currentWeek, 1, Zf.maxWeek(bs).coerceAtLeast(1), suffix = " 周") {
+                                    currentWeek = it
+                                }
+                            }
+                        } else {
+                            FieldRow(pal, "学期起点", "沿用已保存的设置，可在设置里改") {
+                                OutlineChip(pal, "改一下") { askWeek = true }
                             }
                         }
                         Spacer(Modifier.height(8.dp))
@@ -299,7 +349,15 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
                         if (blocks != null && !imported) {
                             PrimaryButton(pal, "导入课表") {
                                 scope.launch {
-                                    runCatching { Store.importZf(ctx, blocks!!, currentWeek) }.fold(
+                                    runCatching {
+                                        Store.importZf(
+                                            ctx, blocks!!,
+                                            currentWeek = if (askWeek) currentWeek else null,
+                                            pageUrl = currentUrl,
+                                            homeUrl = homeUrl,
+                                            parser = parser
+                                        )
+                                    }.fold(
                                         onSuccess = { tt ->
                                             imported = true
                                             err = false
@@ -322,7 +380,9 @@ private fun WebImportScreen(startUrl: String, onFinish: () -> Unit) {
                     Hint(
                         pal,
                         if (imported) "导入完成，可以关掉这个页面了。"
-                        else "先在上面自己登录、点到课表页面，等课表显示出来，再点「抓取本页课表」。"
+                        else if (blocks != null) "确认上面的预览没问题就点「导入课表」。"
+                        else "在上面登录，点到课表页面 —— 课表一显示出来就会自动解析，" +
+                            "不用手动点。没反应再点「抓取本页课表」。"
                     )
                 }
             }

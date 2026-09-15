@@ -79,7 +79,13 @@ data class Timetable(
     val overrides: List<DayOverride> = emptyList(),
     val periods: List<PeriodSlot> = DEFAULT_PERIODS,
     /** 从教务系统解析出来的原始课程块。留着它，改作息表就能原地重算。 */
-    val zfBlocks: List<Zf.Block> = emptyList()
+    val zfBlocks: List<Zf.Block> = emptyList(),
+    /** 学校教务系统入口，导入框预填用。 */
+    val jwxtHome: String = "",
+    /** 上次真正解析成功的那一页。重新同步时直接开这一页，省掉再点一遍菜单。 */
+    val jwxtPage: String = "",
+    /** 上次用的是哪个解析器，显示用：zf / generic */
+    val parserUsed: String = ""
 )
 
 fun Long.toLocalDateTime(zone: ZoneId = ZoneId.systemDefault()): LocalDateTime =

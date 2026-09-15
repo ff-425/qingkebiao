@@ -128,11 +128,20 @@ object Store {
     suspend fun importZf(
         ctx: Context,
         blocks: List<Zf.Block>,
-        currentWeek: Int
+        /** null = 沿用已保存的学期起点，不再问"今天是第几周" */
+        currentWeek: Int?,
+        pageUrl: String = "",
+        homeUrl: String = "",
+        parser: String = "zf"
     ): Timetable {
         val old = load(ctx)
-        val termStart = java.time.LocalDate.now().mondayOf()
-            .minusWeeks((currentWeek - 1).coerceAtLeast(0).toLong())
+        val termStart = when {
+            currentWeek != null ->
+                java.time.LocalDate.now().mondayOf()
+                    .minusWeeks((currentWeek - 1).coerceAtLeast(0).toLong())
+            old.termStartEpochDay != null -> java.time.LocalDate.ofEpochDay(old.termStartEpochDay)
+            else -> java.time.LocalDate.now().mondayOf()
+        }
         val parsed = Zf.toSessions(blocks, termStart, old.periods.ifEmpty { DEFAULT_PERIODS })
         if (parsed.isEmpty()) throw Zf.ParseException("按作息表换算后没有生成任何上课记录。")
         val manual = old.sessions.filter { it.manual }
@@ -142,7 +151,10 @@ object Store {
             termWeeks = Zf.maxWeek(blocks).takeIf { it > 0 },
             sourceLabel = "教务系统网页",
             showWeekend = parsed.any { it.start.toLocalDate().dayOfWeek.value >= 6 },
-            zfBlocks = blocks
+            zfBlocks = blocks,
+            jwxtHome = homeUrl.ifBlank { old.jwxtHome },
+            jwxtPage = pageUrl.ifBlank { old.jwxtPage },
+            parserUsed = parser
         )
         save(ctx, tt)
         return tt

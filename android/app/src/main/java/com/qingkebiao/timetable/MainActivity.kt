@@ -737,7 +737,7 @@ private fun ImportDialog(
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var jwxtUrl by remember { mutableStateOf("") }
+    var jwxtUrl by remember { mutableStateOf(tt.jwxtHome) }
     var url by remember { mutableStateOf(tt.icsUrl) }
     var paste by remember { mutableStateOf("") }
     var msg by remember { mutableStateOf<String?>(null) }
@@ -791,6 +791,8 @@ private fun ImportDialog(
                 webImport.launch(
                     Intent(ctx, WebImportActivity::class.java)
                         .putExtra(WebImportActivity.EXTRA_URL, u)
+                        .putExtra(WebImportActivity.EXTRA_HOME, u)
+                        .putExtra(WebImportActivity.EXTRA_HAS_TERM, tt.termStartEpochDay != null)
                 )
             }
 
@@ -909,6 +911,25 @@ private fun SettingsDialog(
             }
             Spacer(Modifier.height(8.dp))
             OutlineChip(pal, "添加调休（今天）") { onEditOverride(LocalDate.now()) }
+
+            if (d.tt.jwxtPage.isNotBlank()) {
+                Spacer(Modifier.height(22.dp))
+                Label(pal, "重新同步")
+                Hint(
+                    pal,
+                    "直接打开上次出课表的那一页。登录状态通常还在，页面一加载就自动解析，" +
+                        "不用再从菜单里点进去。"
+                )
+                Spacer(Modifier.height(8.dp))
+                PrimaryButton(pal, "重新同步课表") {
+                    ctx.startActivity(
+                        Intent(ctx, WebImportActivity::class.java)
+                            .putExtra(WebImportActivity.EXTRA_URL, d.tt.jwxtPage)
+                            .putExtra(WebImportActivity.EXTRA_HOME, d.tt.jwxtHome)
+                            .putExtra(WebImportActivity.EXTRA_HAS_TERM, true)
+                    )
+                }
+            }
 
             Spacer(Modifier.height(22.dp))
             Label(pal, "作息")
