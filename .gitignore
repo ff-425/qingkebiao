@@ -17,3 +17,6 @@ qingkebiao-pwa.zip
 # 杂项
 .DS_Store
 Thumbs.db
+
+# 传 Cloudflare 的那个文件夹里有 APK，不进仓库（模板在 release/）
+cloudflare-upload/
