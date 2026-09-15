@@ -9,6 +9,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
+import java.time.LocalDateTime
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -21,6 +22,14 @@ object Store {
 
     private const val FILE_NAME = "timetable.json"
     private const val HTML_NAME = "captured.html"
+    private const val CORRUPT_PREFIX = "timetable.corrupt-"
+
+    /**
+     * 上次 [load] 撞见读不出来的数据文件时的错误信息，界面读它来提示用户。
+     * 只是提示，不影响任何逻辑，所以放个可变字段就够了。
+     */
+    @Volatile
+    var lastRecovery: String? = null
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -33,8 +42,35 @@ object Store {
     suspend fun load(ctx: Context): Timetable = withContext(Dispatchers.IO) {
         val f = file(ctx)
         if (!f.exists()) return@withContext Timetable()
-        runCatching { json.decodeFromString<Timetable>(f.readText()) }.getOrElse { Timetable() }
+        val text = runCatching { f.readText() }.getOrNull()
+        if (text.isNullOrBlank()) return@withContext Timetable()
+        runCatching { json.decodeFromString<Timetable>(text) }.getOrElse { e ->
+            // 读不出来就把原文件挪到一边留着。
+            // 直接返回空课表是不行的：界面拿到空的，下一次保存就把它盖掉了，
+            // 用户手动加的课、调休记录、改过的作息就永久没了，而且全程没有任何提示。
+            // 课表本身重新导入一分钟就有，这些东西教务系统里没有。
+            quarantine(ctx, f)
+            lastRecovery = e.message ?: e.toString()
+            Timetable()
+        }
     }
+
+    private fun quarantine(ctx: Context, f: File) {
+        val stamp = LocalDateTime.now().toString().take(19).replace(':', '-')
+        val dest = File(ctx.filesDir, "$CORRUPT_PREFIX$stamp.json")
+        if (!f.renameTo(dest)) {
+            runCatching {
+                dest.writeText(f.readText())
+                f.delete()
+            }
+        }
+    }
+
+    /** 隔离起来的坏文件，新的在前。设置里可以导出或删掉。 */
+    fun corruptFiles(ctx: Context): List<File> =
+        ctx.filesDir.listFiles { it: File -> it.name.startsWith(CORRUPT_PREFIX) }
+            ?.sortedByDescending { it.lastModified() }
+            ?: emptyList()
 
     suspend fun save(ctx: Context, tt: Timetable) = withContext(Dispatchers.IO) {
         // 先写临时文件再改名，避免写一半被杀进程留下坏 JSON

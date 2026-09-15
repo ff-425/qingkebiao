@@ -65,6 +65,7 @@ import com.qingkebiao.timetable.widget.refreshWidgets
 import com.qingkebiao.timetable.widget.scheduleWidgetRefresh
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
 import java.time.LocalDate
 
 class MainActivity : ComponentActivity() {
@@ -139,9 +140,12 @@ private fun Home(pal: Palette, resumeTick: Int) {
     val d = remember(tt) { Derived(tt) }
     val hues = remember(tt) { courseHues(tt.sessions.map { it.title }) }
 
+    var recovered by remember { mutableStateOf<String?>(null) }
+
     // 首次打开先装示例，让人立刻看见这东西长什么样（不落盘，导入真课表即覆盖）
     LaunchedEffect(Unit) {
         val stored = Store.load(ctx)
+        recovered = Store.lastRecovery
         tt = if (stored.sessions.isNotEmpty()) stored else stored.copy(
             sessions = runCatching { Ics.parse(DEMO_ICS) }.getOrDefault(emptyList()),
             sourceLabel = "示例课表",
@@ -234,6 +238,25 @@ private fun Home(pal: Palette, resumeTick: Int) {
         )
 
         NextUpStrip(pal, d, now)
+
+        // 数据读不出来这种事必须说出来。静默变空是最坏的表现：
+        // 用户以为自己手贱删了，其实文件还在。
+        recovered?.let {
+            Row(
+                Modifier.fillMaxWidth().background(pal.signal.copy(alpha = 0.1f))
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "上次的数据读不出来，原文件已经留着没删。设置 → 数据 里可以导出。",
+                    color = pal.signal, fontSize = 12.sp, lineHeight = 16.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                OutlineChip(pal, "知道了") { recovered = null; Store.lastRecovery = null }
+            }
+            HorizontalDivider(thickness = 1.dp, color = pal.rule)
+        }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
@@ -893,6 +916,30 @@ private fun SettingsDialog(
     var confirmRefetch by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
 
+    var corrupt by remember { mutableStateOf(Store.corruptFiles(ctx)) }
+    var pendingExport by remember { mutableStateOf<File?>(null) }
+    // 隔离起来的文件在应用私有目录里，手机上翻不到。能导出来才叫"留着"。
+    val exporter = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        val src = pendingExport
+        if (uri != null && src != null) {
+            runCatching {
+                ctx.contentResolver.openOutputStream(uri)?.use { it.write(src.readBytes()) }
+            }.fold(
+                onSuccess = { msg = "已导出。" },
+                onFailure = { msg = "导出失败：${it.message}" }
+            )
+        }
+        pendingExport = null
+    }
+
+    val appVersion = remember {
+        runCatching {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
+        }.getOrNull().orEmpty()
+    }
+
     // 改学期起点或作息表都要把已导入的课重算一遍；
     // 其余设置（周末、调休、缩放）不碰课程，走普通 onApply，
     // 免得把用户删掉的导入条目又算回来。
@@ -1070,7 +1117,46 @@ private fun SettingsDialog(
 
             Spacer(Modifier.height(22.dp))
             Label(pal, "数据")
-            Hint(pal, "课表只存在这台手机上，不上传。手动添加的条目在重新导入时会保留。")
+            Hint(
+                pal,
+                "课表只存在这台手机上，不上传。手动添加的条目在重新导入时会保留。" +
+                    (if (appVersion.isNotBlank()) "当前版本 v$appVersion。" else "")
+            )
+
+            if (corrupt.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                MsgBox(
+                    pal,
+                    "有 ${corrupt.size} 份读不出来的旧数据被留了下来，没有覆盖掉。" +
+                        "导出来发我，多半能把里面手动加的课和调休捞回来。",
+                    error = true
+                )
+                corrupt.forEach { f ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                f.name.removePrefix("timetable.corrupt-").removeSuffix(".json"),
+                                color = pal.ink2, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                            Text("${f.length()} 字节", color = pal.faint, fontSize = 11.sp)
+                        }
+                        OutlineChip(pal, "导出") {
+                            pendingExport = f
+                            exporter.launch(f.name)
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        DangerChip(pal, "删除") {
+                            f.delete()
+                            corrupt = Store.corruptFiles(ctx)
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
             if (!confirmClear) {
                 DangerChip(pal, "清空课表") { confirmClear = true }
