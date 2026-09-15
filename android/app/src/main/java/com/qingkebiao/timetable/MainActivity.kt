@@ -141,6 +141,8 @@ private fun Home(pal: Palette, resumeTick: Int) {
     val hues = remember(tt) { courseHues(tt.sessions.map { it.title }) }
 
     var recovered by remember { mutableStateOf<String?>(null) }
+    var showUpdate by remember { mutableStateOf(false) }
+    val newVersion = rememberUpdateCheck(tt.updateUrl)
 
     // 首次打开先装示例，让人立刻看见这东西长什么样（不落盘，导入真课表即覆盖）
     LaunchedEffect(Unit) {
@@ -239,6 +241,28 @@ private fun Home(pal: Palette, resumeTick: Int) {
 
         NextUpStrip(pal, d, now)
 
+        // 有新版就在这儿说一声，点一下就能更新完 —— 不用再下文件、进文件管理器
+        newVersion?.let { m ->
+            if (!showUpdate) {
+                Row(
+                    Modifier.fillMaxWidth().background(pal.signal.copy(alpha = 0.1f))
+                        .clickable { showUpdate = true }
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Tag(pal, "新版", pal.signal)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "v${m.versionName.ifBlank { m.versionCode.toString() }}" +
+                            (if (m.notes.isNotBlank()) " · ${m.notes}" else "") + " · 点这里更新",
+                        color = pal.signal, fontSize = 12.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                }
+                HorizontalDivider(thickness = 1.dp, color = pal.rule)
+            }
+        }
+
         // 数据读不出来这种事必须说出来。静默变空是最坏的表现：
         // 用户以为自己手贱删了，其实文件还在。
         recovered?.let {
@@ -301,7 +325,16 @@ private fun Home(pal: Palette, resumeTick: Int) {
             onHourDp = { hourDp = it },
             onClose = { showSettings = false },
             onApply = { commit(it) },
-            onEditOverride = { overrideDate = it }
+            onEditOverride = { overrideDate = it },
+            onOpenUpdate = { showSettings = false; showUpdate = true },
+            hasUpdate = newVersion != null
+        )
+    }
+    if (showUpdate) {
+        UpdateSheet(
+            pal = pal, tt = tt, found = newVersion,
+            onClose = { showUpdate = false },
+            onApply = { commit(it) }
         )
     }
     if (editorOpen) {
@@ -905,7 +938,8 @@ private fun ImportDialog(
 private fun SettingsDialog(
     pal: Palette, d: Derived, hues: Map<String, Float>, hourDp: Dp,
     onHourDp: (Dp) -> Unit, onClose: () -> Unit,
-    onApply: (Timetable) -> Unit, onEditOverride: (LocalDate) -> Unit
+    onApply: (Timetable) -> Unit, onEditOverride: (LocalDate) -> Unit,
+    onOpenUpdate: () -> Unit, hasUpdate: Boolean
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1116,12 +1150,22 @@ private fun SettingsDialog(
             }
 
             Spacer(Modifier.height(22.dp))
-            Label(pal, "数据")
-            Hint(
+            Label(pal, "版本与更新")
+            FieldRow(
                 pal,
-                "课表只存在这台手机上，不上传。手动添加的条目在重新导入时会保留。" +
-                    (if (appVersion.isNotBlank()) "当前版本 v$appVersion。" else "")
-            )
+                if (appVersion.isNotBlank()) "当前版本 v$appVersion" else "当前版本",
+                when {
+                    hasUpdate -> "有新版可以更新"
+                    d.tt.updateUrl.isBlank() -> "还没设更新地址，不会联网检查"
+                    else -> "更新地址：${d.tt.updateUrl}"
+                }
+            ) {
+                OutlineChip(pal, if (hasUpdate) "去更新" else "检查更新", onClick = onOpenUpdate)
+            }
+
+            Spacer(Modifier.height(22.dp))
+            Label(pal, "数据")
+            Hint(pal, "课表只存在这台手机上，不上传。手动添加的条目在重新导入时会保留。")
 
             if (corrupt.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
@@ -1172,7 +1216,8 @@ private fun SettingsDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     DangerChip(pal, "确认清空") {
                         scope.launch { Store.clear(ctx) }
-                        onApply(Timetable())
+                        // 更新地址不是课表数据，清课表不该把它一起清掉
+                        onApply(Timetable(updateUrl = d.tt.updateUrl))
                         onClose()
                     }
                     Spacer(Modifier.width(8.dp))

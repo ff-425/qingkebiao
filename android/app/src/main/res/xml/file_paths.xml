@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 只开放 cacheDir/update 一个目录，下载好的更新包放在这儿 -->
+<paths>
+    <cache-path name="update" path="update/" />
+</paths>

@@ -4,6 +4,11 @@
     <!-- 原生没有 CORS 限制，可以直接拉学校的 ICS 订阅链接 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+        应用内更新用。不上架应用商店，更新就得自己装，否则每次都要
+        "下载文件 → 文件管理器 → 点安装"。只在用户自己填了更新地址时才会用到。
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="true"
@@ -31,6 +36,17 @@
             android:exported="false"
             android:label="教务系统导入"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- 下载好的更新包要交给系统安装器，file:// 从 Android 7 起就不让传了 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- 今日课表小组件 -->
         <receiver

@@ -87,7 +87,9 @@ data class Timetable(
     /** 上次用的是哪个解析器，显示用：zf / generic */
     val parserUsed: String = "",
     /** 作息表是怎么来的：sniffed(从网页读到) / derived(按分组推算) / manual(用户改过) */
-    val periodsSource: String = ""
+    val periodsSource: String = "",
+    /** 检查更新的站点地址。空 = 不检查，一个网络请求都不会发。 */
+    val updateUrl: String = ""
 )
 
 fun Long.toLocalDateTime(zone: ZoneId = ZoneId.systemDefault()): LocalDateTime =
