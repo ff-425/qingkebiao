@@ -11,6 +11,9 @@ android/.cxx/
 # 本地打包出来的 PWA 压缩包，不进仓库
 qingkebiao-pwa.zip
 
+# 放在项目目录里方便拷到手机的 APK，不进仓库
+*.apk
+
 # 杂项
 .DS_Store
 Thumbs.db
