@@ -7,10 +7,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
+import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
-import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.lazy.LazyColumn
 import androidx.glance.appwidget.lazy.items
@@ -30,7 +30,7 @@ import androidx.glance.layout.width
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
+import androidx.glance.appwidget.unit.ColorProvider
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -57,7 +57,6 @@ private val cInk2 = ColorProvider(day = Color(0xFF3C4643), night = Color(0xFFC3C
 private val cMuted = ColorProvider(day = Color(0xFF69736F), night = Color(0xFF8B9490))
 private val cFaint = ColorProvider(day = Color(0xFF96A09C), night = Color(0xFF646D6A))
 private val cSignal = ColorProvider(day = Color(0xFFE03A2F), night = Color(0xFFFF5A4D))
-private val cPaper = ColorProvider(day = Color(0xFFEBEEEC), night = Color(0xFF101312))
 
 private fun hueProvider(hue: Float) =
     ColorProvider(day = blockEdge(hue, false), night = blockEdge(hue, true))
