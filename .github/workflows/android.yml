@@ -26,10 +26,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # runner 自带 Android SDK，但显式装一次要用到的 platform/build-tools 更稳
-      - name: 准备 Android SDK
-        uses: android-actions/setup-android@v3
-      - run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      # 不用 android-actions/setup-android：runner 镜像本身就带 Android SDK，
+      # ANDROID_HOME 已设好，platforms/build-tools 都预装。那个 action 之前是
+      # 这条流水线唯一的故障点，删掉反而更稳。缺什么 AGP 会自己下载。
+      - name: 环境自检
+        continue-on-error: true      # 只为看日志，不参与成败判定
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "--- platforms ---"
+          ls "$ANDROID_HOME/platforms" 2>/dev/null || echo "(无)"
+          echo "--- build-tools ---"
+          ls "$ANDROID_HOME/build-tools" 2>/dev/null || echo "(无)"
+          java -version
 
       # 不用 Gradle Wrapper —— 省掉一个二进制 jar，版本也由这里说了算
       - name: 装 Gradle
