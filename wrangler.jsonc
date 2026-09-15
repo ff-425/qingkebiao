@@ -1,0 +1,10 @@
+{
+  // 只发静态文件的 Worker：没有代码，就是把 cloudflare-upload 里的东西挂到网上。
+  // name 必须和已经建好的那个 Worker 同名，这样地址不变：
+  //   https://qingkebiao.<你的账号子域>.workers.dev
+  "name": "qingkebiao",
+  "compatibility_date": "2026-09-15",
+  "assets": {
+    "directory": "./cloudflare-upload"
+  }
+}
