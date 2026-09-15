@@ -403,8 +403,10 @@ private fun WebImportScreen(
                                         onSuccess = { tt ->
                                             imported = true
                                             err = false
+                                            // 作息到底是哪来的，下面那行 periodsNote 会实时显示，
+                                            // 这里别再写死一句"按内置作息表"跟它打架
                                             msg = "已导入 ${tt.sessions.size} 节课。" +
-                                                "时间是按内置作息表换算的，和你学校不一样就到设置里改「节次时间」。"
+                                                "时间对不上就到设置里改「节次时间」，改完会自动重算。"
                                         },
                                         onFailure = { e -> err = true; msg = "导入失败：${e.message}" }
                                     )

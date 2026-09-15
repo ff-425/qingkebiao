@@ -16,6 +16,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -186,6 +187,9 @@ fun SessionEditorDialog(
  * 调休。国内校历常见两种情况：某天整天放假，或者某天按另一天的课上
  * （"10 月 11 日周六上 10 月 1 日周三的课"）。
  * 两者独立设置 —— 通常放假那天也要单独标一下放假。
+ *
+ * 哪一天调休是在这里选的，不限于"今天"：通知一般提前一两周发，
+ * 看到的当天就应该能把后面那天设好。
  */
 @Composable
 fun DayOverrideDialog(
@@ -193,30 +197,44 @@ fun DayOverrideDialog(
     d: Derived,
     date: LocalDate,
     onClose: () -> Unit,
-    onApply: (DayOverride?) -> Unit
+    onApply: (LocalDate, DayOverride?) -> Unit
 ) {
-    val current = d.overrideFor(date)
-    var kind by remember {
-        mutableStateOf(current?.kind)          // null = 正常上课
-    }
+    var target by remember { mutableStateOf(date) }
+    val current = d.overrideFor(target)
+    var kind by remember { mutableStateOf(current?.kind) }   // null = 正常上课
     var followDate by remember {
         mutableStateOf(
             current?.followEpochDay?.let { LocalDate.ofEpochDay(it) } ?: date.minusDays(1)
         )
     }
 
+    // 换了日期就显示那天已有的设置，而不是把上一天的选择带过去
+    LaunchedEffect(target) {
+        val ov = d.overrideFor(target)
+        kind = ov?.kind
+        followDate = ov?.followEpochDay?.let { LocalDate.ofEpochDay(it) } ?: target.minusDays(1)
+    }
+
     val srcCount = d.tt.sessions.count { it.start.toLocalDate() == followDate && !it.manual }
+    val ownCount = d.tt.sessions.count { it.start.toLocalDate() == target && !it.manual }
 
     Sheet(pal, "调休设置", onClose) {
         Column {
-            Text(
-                "$date ${date.abbr()}" + if (d.weeks > 0) " · 第 ${d.weekOf(date)} 周" else "",
-                color = pal.ink,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                fontFamily = FontFamily.Monospace
-            )
-            Spacer(Modifier.height(14.dp))
+            Label(pal, "哪一天")
+            DateStepper(pal, target) { target = it }
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlineChip(pal, "今天") { target = LocalDate.now() }
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "${target.abbr()}" +
+                        (if (d.weeks > 0) " · 第 ${d.weekOf(target)} 周" else "") +
+                        " · 原本 $ownCount 节课" +
+                        (if (current != null) " · 已设过调休" else ""),
+                    color = pal.faint, fontSize = 11.sp, maxLines = 1
+                )
+            }
+            Spacer(Modifier.height(16.dp))
 
             listOf<Triple<OverrideKind?, String, String>>(
                 Triple(null, "正常上课", "按这天本来的星期上课"),
@@ -265,7 +283,7 @@ fun DayOverrideDialog(
                 MsgBox(
                     pal,
                     if (srcCount > 0)
-                        "$followDate ${followDate.abbr()} 有 $srcCount 节课，会全部搬到 $date。"
+                        "$followDate ${followDate.abbr()} 有 $srcCount 节课，会全部搬到 $target ${target.abbr()}。"
                     else
                         "$followDate ${followDate.abbr()} 没有课，搬过来也是空的 —— 确认下日期对不对。",
                     error = srcCount == 0
@@ -276,13 +294,14 @@ fun DayOverrideDialog(
             HorizontalDivider(thickness = 1.dp, color = pal.ruleSoft)
             Spacer(Modifier.height(14.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                PrimaryButton(pal, "应用") {
+                PrimaryButton(pal, "应用到 $target") {
                     onApply(
+                        target,
                         when (kind) {
                             null -> null        // 清除这天的调休
-                            OverrideKind.HOLIDAY -> DayOverride(date.toEpochDay(), OverrideKind.HOLIDAY)
+                            OverrideKind.HOLIDAY -> DayOverride(target.toEpochDay(), OverrideKind.HOLIDAY)
                             OverrideKind.FOLLOW -> DayOverride(
-                                date.toEpochDay(),
+                                target.toEpochDay(),
                                 OverrideKind.FOLLOW,
                                 followDate.toEpochDay()
                             )
@@ -291,7 +310,7 @@ fun DayOverrideDialog(
                 }
                 Spacer(Modifier.weight(1f))
                 if (current != null) {
-                    OutlineChip(pal, "清除调休") { onApply(null) }
+                    OutlineChip(pal, "清除调休") { onApply(target, null) }
                 }
             }
         }

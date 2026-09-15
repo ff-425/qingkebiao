@@ -68,20 +68,32 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 class MainActivity : ComponentActivity() {
+    /**
+     * 每次回到前台 +1。
+     * Activity 不会被销毁，Compose 的状态就一直留着 —— 上次翻到第 12 周，
+     * 明天打开还是第 12 周。课表这种东西，打开就该是今天。
+     */
+    private val resumeTick = mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 全屏到状态栏/导航栏下面，再用 safeDrawing 把内容让开 ——
         // 这是网页版里 env(safe-area-inset-*) 那套事情的原生做法
         enableEdgeToEdge()
         scheduleWidgetRefresh(this)
-        setContent { App() }
+        setContent { App(resumeTick.intValue) }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        resumeTick.intValue++
     }
 }
 
 private enum class ViewMode { Day, Week }
 
 @Composable
-private fun App() {
+private fun App(resumeTick: Int) {
     val dark = isSystemInDarkTheme()
     val pal = remember(dark) { if (dark) DarkPalette else LightPalette }
 
@@ -100,14 +112,14 @@ private fun App() {
     MaterialTheme(colorScheme = scheme) {
         Surface(color = pal.paper, modifier = Modifier.fillMaxSize()) {
             Box(Modifier.windowInsetsPadding(WindowInsets.safeDrawing)) {
-                Home(pal)
+                Home(pal, resumeTick)
             }
         }
     }
 }
 
 @Composable
-private fun Home(pal: Palette) {
+private fun Home(pal: Palette, resumeTick: Int) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -141,6 +153,14 @@ private fun Home(pal: Palette) {
         if (tt.sessions.isNotEmpty()) {
             weekIdx = d.clampWeek(d.weekOf(LocalDate.now()))
         }
+    }
+
+    // 每次回到前台都归位到今天 / 本周，不保留上次翻到哪儿了
+    LaunchedEffect(resumeTick) {
+        val today = LocalDate.now()
+        view = ViewMode.Day
+        dayDate = today
+        weekIdx = d.clampWeek(d.weekOf(today))
     }
 
     // "进行中""还有几分钟"这些要自己走，半分钟一拍足够
@@ -274,7 +294,7 @@ private fun Home(pal: Palette) {
         DayOverrideDialog(
             pal, d, date,
             onClose = { overrideDate = null },
-            onApply = { setOverride(date, it); overrideDate = null }
+            onApply = { day, ov -> setOverride(day, ov); overrideDate = null }
         )
     }
     detail?.let { s ->
@@ -433,9 +453,24 @@ private fun WeekGrid(
     val minuteDp = hourDp / 60f
     val total = minuteDp * (hi - lo)
     val today = LocalDate.now()
-    val gutter = 40.dp
+    val gutter = 46.dp
     val scroll = rememberScrollState()
     val density = LocalDensity.current
+
+    // 刻度取课本身的起止时刻。整点没有任何事发生，写 09:00 只会让人去心算。
+    val marks = remember(d.tt.sessions, lo, hi) { timeMarks(d.tt.sessions, lo, hi) }
+    // 挤在一起的标签读不了，按当前缩放留出最小间距，开始时刻优先保留
+    val labels = remember(marks, minuteDp) {
+        val minGap = if (minuteDp.value > 0.01f) (11.dp / minuteDp) else 20f
+        val picked = ArrayList<TimeMark>()
+        for (m in marks.filter { it.isStart }) {
+            if (picked.none { kotlin.math.abs(it.minute - m.minute) < minGap }) picked.add(m)
+        }
+        for (m in marks.filter { !it.isStart }) {
+            if (picked.none { kotlin.math.abs(it.minute - m.minute) < minGap }) picked.add(m)
+        }
+        picked.sortedBy { it.minute }
+    }
 
     // 竖直落点：本周第一节课停在顶部附近，别把早八滚出屏幕
     LaunchedEffect(weekIdx, hi, lo, minuteDp) {
@@ -483,25 +518,25 @@ private fun WeekGrid(
 
         Row(Modifier.weight(1f).verticalScroll(scroll)) {
             Box(Modifier.width(gutter).height(total).background(pal.panel)) {
-                var m = lo
-                while (m <= hi) {
-                    if (m % 60 == 0) {
-                        Text(
-                            m.hhmm(), color = pal.faint, fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace, textAlign = TextAlign.End,
-                            modifier = Modifier
-                                .offset(y = minuteDp * (m - lo) - 6.dp)
-                                .fillMaxWidth()
-                                .padding(end = 5.dp)
-                        )
-                    }
-                    m += 60
+                labels.forEach { mk ->
+                    Text(
+                        mk.minute.hhmm(),
+                        // 上课时刻是要看的，下课时刻只是参照，压暗一档
+                        color = if (mk.isStart) pal.ink2 else pal.faint,
+                        fontSize = if (mk.isStart) 10.sp else 9.sp,
+                        fontWeight = if (mk.isStart) FontWeight.SemiBold else FontWeight.Normal,
+                        fontFamily = FontFamily.Monospace, textAlign = TextAlign.End, maxLines = 1,
+                        modifier = Modifier
+                            .offset(y = minuteDp * (mk.minute - lo) - 6.dp)
+                            .fillMaxWidth()
+                            .padding(end = 5.dp)
+                    )
                 }
             }
             days.forEach { day ->
                 DayColumn(
                     pal, d, hues, day, lo, hi, minuteDp, total,
-                    day == today, now, Modifier.weight(1f), onPick
+                    day == today, now, marks, Modifier.weight(1f), onPick
                 )
             }
         }
@@ -512,7 +547,8 @@ private fun WeekGrid(
 private fun DayColumn(
     pal: Palette, d: Derived, hues: Map<String, Float>, day: LocalDate,
     lo: Int, hi: Int, minuteDp: Dp, total: Dp,
-    isToday: Boolean, now: Long, modifier: Modifier, onPick: (Session) -> Unit
+    isToday: Boolean, now: Long, marks: List<TimeMark>,
+    modifier: Modifier, onPick: (Session) -> Unit
 ) {
     val items = remember(d, day) { d.sessionsOn(day) }
     val placed = remember(items) { layoutDay(items.filter { !it.allDay }) }
@@ -527,14 +563,13 @@ private fun DayColumn(
     BoxWithConstraints(
         modifier.height(total).background(bg).drawBehind {
             val perMin = minuteDp.toPx()
-            var m = lo
-            while (m <= hi) {
-                val y = (m - lo) * perMin
+            // 网格线画在上下课时刻上，和课程块的边缘正好重合
+            marks.forEach { mk ->
+                val y = (mk.minute - lo) * perMin
                 drawLine(
-                    color = if (m % 60 == 0) pal.rule else pal.ruleSoft,
+                    color = if (mk.isStart) pal.rule else pal.ruleSoft,
                     start = Offset(0f, y), end = Offset(size.width, y), strokeWidth = 1f
                 )
-                m += 30
             }
             drawLine(pal.ruleSoft, Offset(0f, 0f), Offset(0f, size.height), 1f)
         }
@@ -853,6 +888,10 @@ private fun SettingsDialog(
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf<String?>(null) }
     var showPeriods by remember { mutableStateOf(false) }
+    // 会覆盖/清掉数据的按钮一律两步，误触一下不至于把整张课表没了
+    var confirmResync by remember { mutableStateOf(false) }
+    var confirmRefetch by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
 
     // 改学期起点或作息表都要把已导入的课重算一遍；
     // 其余设置（周末、调休、缩放）不碰课程，走普通 onApply，
@@ -910,7 +949,9 @@ private fun SettingsDialog(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            OutlineChip(pal, "添加调休（今天）") { onEditOverride(LocalDate.now()) }
+            OutlineChip(pal, "添加调休") { onEditOverride(LocalDate.now()) }
+            Spacer(Modifier.height(4.dp))
+            Hint(pal, "点进去可以选任意一天，不限于今天 —— 调休通知一般提前发。")
 
             if (d.tt.jwxtPage.isNotBlank()) {
                 Spacer(Modifier.height(22.dp))
@@ -921,13 +962,29 @@ private fun SettingsDialog(
                         "不用再从菜单里点进去。"
                 )
                 Spacer(Modifier.height(8.dp))
-                PrimaryButton(pal, "重新同步课表") {
-                    ctx.startActivity(
-                        Intent(ctx, WebImportActivity::class.java)
-                            .putExtra(WebImportActivity.EXTRA_URL, d.tt.jwxtPage)
-                            .putExtra(WebImportActivity.EXTRA_HOME, d.tt.jwxtHome)
-                            .putExtra(WebImportActivity.EXTRA_HAS_TERM, true)
+                if (!confirmResync) {
+                    PrimaryButton(pal, "重新同步课表") { confirmResync = true }
+                } else {
+                    MsgBox(
+                        pal,
+                        "重新同步会用教务系统上的课表覆盖现在这份。" +
+                            "你手动加的课和事件会保留，手动改过的那几节也保留；" +
+                            "其余导入来的都会按网页重来一遍。"
                     )
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PrimaryButton(pal, "确认，去同步") {
+                            confirmResync = false
+                            ctx.startActivity(
+                                Intent(ctx, WebImportActivity::class.java)
+                                    .putExtra(WebImportActivity.EXTRA_URL, d.tt.jwxtPage)
+                                    .putExtra(WebImportActivity.EXTRA_HOME, d.tt.jwxtHome)
+                                    .putExtra(WebImportActivity.EXTRA_HAS_TERM, true)
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        OutlineChip(pal, "取消") { confirmResync = false }
+                    }
                 }
             }
 
@@ -971,14 +1028,25 @@ private fun SettingsDialog(
                     fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(8.dp))
-                PrimaryButton(pal, "重新拉取课表") {
-                    scope.launch {
-                        runCatching {
-                            Store.importIcs(ctx, Store.fetchIcs(d.tt.icsUrl), "订阅链接", d.tt.icsUrl)
-                        }.fold(
-                            onSuccess = { onApply(it); msg = "已更新，手动添加的条目保留。" },
-                            onFailure = { msg = "拉取失败：${it.message}" }
-                        )
+                if (!confirmRefetch) {
+                    PrimaryButton(pal, "重新拉取课表") { confirmRefetch = true }
+                } else {
+                    MsgBox(pal, "会用订阅链接上的内容覆盖现在这份，手动添加的条目保留。")
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PrimaryButton(pal, "确认拉取") {
+                            confirmRefetch = false
+                            scope.launch {
+                                runCatching {
+                                    Store.importIcs(ctx, Store.fetchIcs(d.tt.icsUrl), "订阅链接", d.tt.icsUrl)
+                                }.fold(
+                                    onSuccess = { onApply(it); msg = "已更新，手动添加的条目保留。" },
+                                    onFailure = { msg = "拉取失败：${it.message}" }
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        OutlineChip(pal, "取消") { confirmRefetch = false }
                     }
                 }
             }
@@ -1004,10 +1072,26 @@ private fun SettingsDialog(
             Label(pal, "数据")
             Hint(pal, "课表只存在这台手机上，不上传。手动添加的条目在重新导入时会保留。")
             Spacer(Modifier.height(8.dp))
-            DangerChip(pal, "清空课表") {
-                scope.launch { Store.clear(ctx) }
-                onApply(Timetable())
-                onClose()
+            if (!confirmClear) {
+                DangerChip(pal, "清空课表") { confirmClear = true }
+            } else {
+                MsgBox(
+                    pal,
+                    "确定要清空吗？${d.tt.sessions.size} 节课、" +
+                        "${d.tt.overrides.size} 条调休记录和作息设置都会删掉，删了没法撤销。" +
+                        "只是想换一份课表的话，直接重新导入就行，不用先清空。",
+                    error = true
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DangerChip(pal, "确认清空") {
+                        scope.launch { Store.clear(ctx) }
+                        onApply(Timetable())
+                        onClose()
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    OutlineChip(pal, "取消") { confirmClear = false }
+                }
             }
 
             msg?.let {
@@ -1026,9 +1110,10 @@ private fun DetailDialog(
     onClose: () -> Unit, onEdit: () -> Unit
 ) {
     val same = d.tt.sessions.filter { it.title == s.title }
-    val places = same.map { it.location }.filter { it.isNotBlank() }.distinct()
-    val teachers = same.map { it.teacher }.filter { it.isNotBlank() }.distinct()
-    val slots = same.map { "${it.start.toLocalDate().abbr()} ${it.start.hhmm()}–${it.end.hhmm()}" }.distinct()
+    // 一门课可能"周一在这上、周四在那上"。地点和时间必须成对列，
+    // 分开列成两串就没法对应了 —— 这是之前那版最容易看错的地方。
+    val arrangements = remember(d, s.title) { d.arrangementsOf(s.title) }
+    val mine = remember(arrangements, s) { arrangements.matching(s) }
     val hue = hues[s.title] ?: 0f
 
     Sheet(pal, "课程详情", onClose) {
@@ -1049,16 +1134,77 @@ private fun DetailDialog(
                     )
                 }
             }
-            Spacer(Modifier.height(14.dp))
-            if (places.isNotEmpty()) DetailRow(pal, "地点", places.joinToString(" / "))
-            if (teachers.isNotEmpty()) DetailRow(pal, "教师", teachers.joinToString(" / "))
-            DetailRow(pal, "上课时间", slots.joinToString("\n"))
+            Spacer(Modifier.height(16.dp))
+            Label(pal, if (arrangements.size > 1) "上课安排（${arrangements.size} 种）" else "上课安排")
+            if (arrangements.size > 1) {
+                Hint(pal, "这门课不止一种安排，时间和地点是一一对应的。")
+                Spacer(Modifier.height(8.dp))
+            }
+            arrangements.forEach { a ->
+                ArrangementCard(pal, d, a, hue, current = a === mine)
+                Spacer(Modifier.height(6.dp))
+            }
+
+            Spacer(Modifier.height(10.dp))
             DetailRow(pal, "周次", d.weekRangeOf(s.title).ifBlank { "—" } + " 周")
             DetailRow(pal, "总节数", "${same.size} 次")
             if (s.note.isNotBlank()) DetailRow(pal, "备注", s.note.trim())
 
             Spacer(Modifier.height(16.dp))
             PrimaryButton(pal, "编辑这一节", onClick = onEdit)
+        }
+    }
+}
+
+/** 一种上课安排：星期、时段、地点、教师、周次全在一块儿，不拆开。 */
+@Composable
+private fun ArrangementCard(
+    pal: Palette, d: Derived, a: Arrangement, hue: Float, current: Boolean
+) {
+    val periodText = periodLabel(d.tt.periods, a.startMin, a.endMin)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(
+                if (current) pal.signal.copy(alpha = 0.07f) else pal.panel2,
+                RoundedCornerShape(2.dp)
+            )
+            .padding(10.dp)
+    ) {
+        Box(
+            Modifier.width(3.dp).height(34.dp)
+                .background(blockEdge(hue, pal.dark), RoundedCornerShape(2.dp))
+        )
+        Spacer(Modifier.width(9.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${DAY_ABBR[a.weekday % 7]} ${a.startMin.hhmm()}–${a.endMin.hhmm()}",
+                    color = pal.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace, maxLines = 1
+                )
+                if (periodText.isNotBlank()) {
+                    Spacer(Modifier.width(7.dp))
+                    Text(periodText, color = pal.faint, fontSize = 11.sp, maxLines = 1)
+                }
+                Spacer(Modifier.weight(1f))
+                if (current) Tag(pal, "本次", pal.signal)
+            }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                a.location.ifBlank { "未标注地点" },
+                color = if (a.location.isBlank()) pal.faint else pal.ink2,
+                fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                listOfNotNull(
+                    compressWeeks(a.weeks).ifBlank { null }?.let { "第 $it 周" },
+                    a.teacher.ifBlank { null },
+                    "${a.count} 次"
+                ).joinToString(" · "),
+                color = pal.muted, fontSize = 11.sp, maxLines = 2
+            )
         }
     }
 }

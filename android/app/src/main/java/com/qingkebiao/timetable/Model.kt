@@ -197,6 +197,34 @@ class Derived(val tt: Timetable, val zone: ZoneId = ZoneId.systemDefault()) {
         // 窗口外（比如假期后才开学）兜底扫一遍原始数据
             ?: tt.sessions.filter { it.start > now }.minByOrNull { it.start }
 
+    /**
+     * 同一门课有哪几种固定安排。
+     *
+     * 一门课经常是"周一在 A 楼上理论、周四在 B 楼上实验"，甚至两段时间不同地点。
+     * 只列一堆地点、再列一堆时间，是对不上号的 —— 必须成对给出来。
+     * 按"星期 + 时段 + 地点 + 教师"分组，这四项一样才算同一种安排。
+     */
+    fun arrangementsOf(title: String): List<Arrangement> =
+        tt.sessions.asSequence()
+            .filter { it.title == title && !it.allDay }
+            .groupBy {
+                ArrKey(
+                    it.start.toLocalDate(zone).dayOfWeek.value,
+                    it.startMinute(zone), it.endMinute(zone),
+                    it.location, it.teacher
+                )
+            }
+            .map { (k, list) ->
+                Arrangement(
+                    weekday = k.wd, startMin = k.s, endMin = k.e,
+                    location = k.loc, teacher = k.tea,
+                    weeks = list.map { weekOf(it.start.toLocalDate(zone)) }
+                        .filter { it >= 1 }.distinct().sorted(),
+                    count = list.size
+                )
+            }
+            .sortedWith(compareBy({ it.weekday }, { it.startMin }))
+
     /** 某门课上哪些周，压成 "1-8,10,12-16" 这种课表写法。 */
     fun weekRangeOf(title: String): String {
         val ws = tt.sessions.filter { it.title == title }
@@ -204,6 +232,64 @@ class Derived(val tt: Timetable, val zone: ZoneId = ZoneId.systemDefault()) {
             .filter { it >= 1 }
         return compressWeeks(ws)
     }
+}
+
+/** 一门课的一种固定安排：星期几、几点到几点、在哪、谁上、上哪几周。 */
+data class Arrangement(
+    /** 1 = 周一 … 7 = 周日 */
+    val weekday: Int,
+    val startMin: Int,
+    val endMin: Int,
+    val location: String,
+    val teacher: String,
+    val weeks: List<Int>,
+    val count: Int
+)
+
+private data class ArrKey(val wd: Int, val s: Int, val e: Int, val loc: String, val tea: String)
+
+/**
+ * 这一节课属于哪种安排。
+ * 调休搬过来的课星期变了，所以先严格匹配，匹配不上再只看时段和地点。
+ */
+fun List<Arrangement>.matching(s: Session, zone: ZoneId = ZoneId.systemDefault()): Arrangement? {
+    val wd = s.start.toLocalDate(zone).dayOfWeek.value
+    val sm = s.startMinute(zone)
+    val em = s.endMinute(zone)
+    return firstOrNull {
+        it.weekday == wd && it.startMin == sm && it.endMin == em &&
+            it.location == s.location && it.teacher == s.teacher
+    } ?: firstOrNull { it.startMin == sm && it.location == s.location }
+}
+
+/** 这个时段对应第几节。对得上才显示，对不上（ICS 导入的）就不显示，不硬凑。 */
+fun periodLabel(periods: List<PeriodSlot>, startMin: Int, endMin: Int): String {
+    val a = periods.firstOrNull { it.startMin == startMin } ?: return ""
+    val b = periods.lastOrNull { it.endMin == endMin } ?: return "第${a.index}节"
+    return if (b.index > a.index) "第${a.index}-${b.index}节" else "第${a.index}节"
+}
+
+/** 时间轴刻度。取课本身的起止时刻，而不是整点 —— 整点上没有任何事情发生。 */
+data class TimeMark(val minute: Int, val isStart: Boolean)
+
+fun timeMarks(
+    sessions: List<Session>,
+    lo: Int,
+    hi: Int,
+    zone: ZoneId = ZoneId.systemDefault()
+): List<TimeMark> {
+    val starts = HashSet<Int>()
+    val ends = HashSet<Int>()
+    for (s in sessions) {
+        if (s.allDay) continue
+        starts.add(s.startMinute(zone))
+        ends.add(s.endMinute(zone))
+    }
+    // 一节课都没有时退回整点，至少有个参照
+    if (starts.isEmpty()) return generateSequence(lo) { it + 60 }.takeWhile { it <= hi }
+        .map { TimeMark(it, true) }.toList()
+    return (starts + ends).filter { it in lo..hi }.sorted()
+        .map { TimeMark(it, it in starts) }
 }
 
 fun compressWeeks(ws: List<Int>): String {
