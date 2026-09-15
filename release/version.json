@@ -1,7 +1,7 @@
 {
-  "versionCode": 11,
-  "versionName": "11",
+  "versionCode": 12,
+  "versionName": "12",
   "url": "https://github.com/ff-425/qingkebiao/releases/download/latest/qingkebiao.apk",
   "size": 11468889,
-  "notes": "修了更新面板把 10.9 MB 显示成 10 MB"
+  "notes": "新增：查教务系统有没有调课，变动先列给你看，你确认了才改"
 }
