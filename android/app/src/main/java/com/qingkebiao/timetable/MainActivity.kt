@@ -865,7 +865,7 @@ private fun SettingsDialog(
             periods = d.tt.periods,
             onClose = { showPeriods = false },
             onApply = { ps ->
-                applyAndRecompute(d.tt.copy(periods = ps))
+                applyAndRecompute(d.tt.copy(periods = ps, periodsSource = "manual"))
                 showPeriods = false
                 msg = "作息表已保存，课表时间已按新作息重算。"
             }

@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -170,6 +171,27 @@ private fun WebImportScreen(
     var askWeek by remember { mutableStateOf(!hasTerm) }
     var imported by remember { mutableStateOf(false) }
     var autoTried by remember { mutableStateOf("") }
+    var sniffed by remember { mutableStateOf<List<PeriodSlot>?>(null) }
+    var groups by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
+    // 已存下来的设置。预览必须和 Store.importZf 用同一套取值规则，
+    // 否则"先看预览再导入"就成了摆设 —— 看到的和导进去的不是一回事。
+    var stored by remember { mutableStateOf<Timetable?>(null) }
+    LaunchedEffect(Unit) { stored = Store.load(ctx) }
+
+    // 和 Store.importZf 里的优先级严格一致
+    val storedIsUserSet = stored?.periodsSource == "sniffed" || stored?.periodsSource == "manual"
+    val effPeriods: List<PeriodSlot> = when {
+        sniffed != null -> sniffed!!
+        storedIsUserSet -> stored!!.periods
+        groups.isNotEmpty() -> Periods.generate(groups)
+        else -> stored?.periods?.ifEmpty { DEFAULT_PERIODS } ?: DEFAULT_PERIODS
+    }
+    val periodsNote: String = when {
+        sniffed != null -> "已从这次浏览的页面读到真实作息 ✓"
+        storedIsUserSet && stored?.periodsSource == "sniffed" -> "用之前从教务系统读到的作息 ✓"
+        storedIsUserSet -> "用你自己设过的作息 ✓"
+        else -> Periods.describe(groups) + "，不准就在设置里改"
+    }
 
     val saver = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/html")
@@ -195,6 +217,14 @@ private fun WebImportScreen(
             }
             captured = html
             scope.launch { Store.saveCapturedHtml(ctx, html) }
+
+            // 任何页面都嗅探一遍作息时间：用户可能先逛到"作息时间"页再去课表页。
+            // 读到了就立刻存下来，不用等他导入。
+            Periods.sniff(html)?.let { ps ->
+                sniffed = ps
+                scope.launch { Store.savePeriods(ctx, ps) }
+            }
+            groups = Periods.deriveGroups(html).ifEmpty { groups }
 
             // 先用正方的结构化解析；认不出再退到通用表格兜底。
             // 通用解析是猜的，所以下面会先把结果预览给用户，由他确认再导入。
@@ -308,6 +338,14 @@ private fun WebImportScreen(
                 Column(Modifier.fillMaxWidth().background(pal.panel).padding(10.dp)) {
                     msg?.let {
                         MsgBox(pal, it, err)
+                        Spacer(Modifier.height(6.dp))
+                        // 这行必须实时渲染，不能塞进 msg：msg 是抓取那一刻的快照，
+                        // 而作息来源依赖异步读出来的存储，烤进字符串就会永远显示旧值。
+                        Text(
+                            "时间：" + periodsNote,
+                            color = if (sniffed != null || storedIsUserSet) pal.ink2 else pal.muted,
+                            fontSize = 11.5.sp, lineHeight = 16.sp
+                        )
                         Spacer(Modifier.height(8.dp))
                     }
 
@@ -316,7 +354,9 @@ private fun WebImportScreen(
                         val dow = "一二三四五六日"
                         bs.sortedWith(compareBy({ it.weekday }, { it.startPeriod })).take(6).forEach { b ->
                             Text(
-                                "周${dow[b.weekday - 1]} ${b.startPeriod}-${b.endPeriod}节  ${b.title}" +
+                                "周${dow[b.weekday - 1]} ${b.startPeriod}-${b.endPeriod}节 " +
+                                    periodRange(b.startPeriod, b.endPeriod, effPeriods) +
+                                    "  ${b.title}" +
                                     (if (b.location.isNotBlank()) "  ${b.location}" else ""),
                                 color = pal.ink2, fontSize = 11.5.sp,
                                 fontFamily = FontFamily.Monospace, maxLines = 1
@@ -355,7 +395,9 @@ private fun WebImportScreen(
                                             currentWeek = if (askWeek) currentWeek else null,
                                             pageUrl = currentUrl,
                                             homeUrl = homeUrl,
-                                            parser = parser
+                                            parser = parser,
+                                            sniffedPeriods = sniffed,
+                                            groups = groups
                                         )
                                     }.fold(
                                         onSuccess = { tt ->
@@ -403,3 +445,10 @@ private const val DESKTOP_UA =
 private const val MOBILE_UA =
     "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+
+/** 把"第 a-b 节"换算成人能看的时刻段，预览里用。 */
+private fun periodRange(a: Int, b: Int, periods: List<PeriodSlot>): String {
+    val s = periods.firstOrNull { it.index == a } ?: return ""
+    val e = periods.firstOrNull { it.index == b } ?: s
+    return s.startMin.hhmm() + "-" + e.endMin.hhmm()
+}

@@ -132,9 +132,24 @@ object Store {
         currentWeek: Int?,
         pageUrl: String = "",
         homeUrl: String = "",
-        parser: String = "zf"
+        parser: String = "zf",
+        /** 本次从网页读到的真实作息，没读到传 null */
+        sniffedPeriods: List<PeriodSlot>? = null,
+        /** 课表页的"上午/下午/晚上各几节"，用于读不到真时间时按真实结构推算 */
+        groups: List<Pair<String, Int>> = emptyList()
     ): Timetable {
         val old = load(ctx)
+
+        // 作息表来源优先级：这次读到的 > 用户已确认过的 > 按页面分组推算 > 通用默认
+        val periods: List<PeriodSlot>
+        val periodsSource: String
+        when {
+            sniffedPeriods != null -> { periods = sniffedPeriods; periodsSource = "sniffed" }
+            old.periodsSource == "sniffed" || old.periodsSource == "manual" ->
+                { periods = old.periods; periodsSource = old.periodsSource }
+            groups.isNotEmpty() -> { periods = Periods.generate(groups); periodsSource = "derived" }
+            else -> { periods = old.periods.ifEmpty { DEFAULT_PERIODS }; periodsSource = "derived" }
+        }
         val termStart = when {
             currentWeek != null ->
                 java.time.LocalDate.now().mondayOf()
@@ -142,7 +157,7 @@ object Store {
             old.termStartEpochDay != null -> java.time.LocalDate.ofEpochDay(old.termStartEpochDay)
             else -> java.time.LocalDate.now().mondayOf()
         }
-        val parsed = Zf.toSessions(blocks, termStart, old.periods.ifEmpty { DEFAULT_PERIODS })
+        val parsed = Zf.toSessions(blocks, termStart, periods)
         if (parsed.isEmpty()) throw Zf.ParseException("按作息表换算后没有生成任何上课记录。")
         val manual = old.sessions.filter { it.manual }
         val tt = old.copy(
@@ -154,7 +169,9 @@ object Store {
             zfBlocks = blocks,
             jwxtHome = homeUrl.ifBlank { old.jwxtHome },
             jwxtPage = pageUrl.ifBlank { old.jwxtPage },
-            parserUsed = parser
+            parserUsed = parser,
+            periods = periods,
+            periodsSource = periodsSource
         )
         save(ctx, tt)
         return tt
@@ -171,6 +188,12 @@ object Store {
         val parsed = Zf.toSessions(tt.zfBlocks, termStart, tt.periods.ifEmpty { DEFAULT_PERIODS })
         val manual = tt.sessions.filter { it.manual }
         return tt.copy(sessions = (parsed + manual).sortedBy { it.start })
+    }
+
+    /** 从网页里读到了真实作息，立刻存下来 —— 用户可能先逛到作息页再去课表页。 */
+    suspend fun savePeriods(ctx: Context, periods: List<PeriodSlot>) {
+        val old = load(ctx)
+        save(ctx, recomputeFromBlocks(old.copy(periods = periods, periodsSource = "sniffed")))
     }
 
     /* ---------------- 抓来的教务系统网页 ---------------- */
