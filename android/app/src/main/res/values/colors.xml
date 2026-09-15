@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 和网页版同一套：冷灰绿印刷底 + 信号红 -->
+    <color name="paper">#EBEEEC</color>
+    <color name="ink">#111614</color>
+    <color name="signal">#E03A2F</color>
+    <color name="icon_bg">#111614</color>
+    <color name="icon_col">#232927</color>
+    <color name="icon_red">#D9536A</color>
+    <color name="icon_teal">#3FA894</color>
+    <color name="icon_amber">#D8A23E</color>
+</resources>

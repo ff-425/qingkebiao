@@ -1,0 +1,6 @@
+# 仓库里统一存 LF。GitHub Actions 在 Linux 上跑，
+# workflow 和 sw.js 之类带 CRLF 进去容易出奇怪的问题。
+* text=auto eol=lf
+
+*.png binary
+*.zip binary

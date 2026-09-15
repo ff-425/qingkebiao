@@ -1,0 +1,146 @@
+<title>清课表</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Narrow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="app.css">
+
+<div class="bar">
+  <div class="brand">
+    <b>清课表</b>
+    <span class="term" id="termLabel"></span>
+  </div>
+
+  <div class="stepper">
+    <button id="prevWk" title="上一周" aria-label="上一周">&#8249;</button>
+    <div class="wknum">
+      <span class="n" id="wkNum">—</span>
+      <span class="d" id="wkRange"></span>
+    </div>
+    <button id="nextWk" title="下一周" aria-label="下一周">&#8250;</button>
+  </div>
+  <button class="today-btn" id="goToday">本周</button>
+
+  <div class="spacer"></div>
+
+  <div class="seg" role="group" aria-label="视图">
+    <button id="vDay" aria-pressed="false">今日</button>
+    <button id="vWeek" aria-pressed="true">周</button>
+  </div>
+
+  <button class="icon-btn" id="openImport" title="导入课表" aria-label="导入课表">
+    <svg viewBox="0 0 24 24"><path d="M12 16V4m0 12-4-4m4 4 4-4"/><path d="M4 18v2h16v-2"/></svg>
+  </button>
+  <button class="icon-btn" id="openSettings" title="设置" aria-label="设置">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M4.2 4.2l2.1 2.1m11.4 11.4 2.1 2.1M2 12h3m14 0h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+  </button>
+</div>
+
+<div class="nextup" id="nextup"></div>
+
+<div class="stage" id="stage"></div>
+
+<!-- ============ import dialog ============ -->
+<dialog id="importDlg">
+  <div class="dlg-head">
+    <h3>导入课表</h3>
+    <button class="btn" data-close>关闭</button>
+  </div>
+  <div class="dlg-body">
+
+    <section>
+      <h4>1 · 从 .ics 文件导入</h4>
+      <p class="note">最可靠的方式：在浏览器里打开学校给的订阅链接，它会下载一个 <code>.ics</code> 文件，把文件拖到下面。数据全程留在本机。</p>
+      <div class="drop" id="drop">
+        <strong>把 .ics 文件拖到这里</strong>
+        <span>或 <button class="btn" id="pickFile" style="padding:3px 9px;font-size:11.5px">选择文件</button></span>
+      </div>
+      <input type="file" id="fileIn" accept=".ics,.ICS,text/calendar" hidden>
+    </section>
+
+    <section>
+      <h4>2 · 直接拉取订阅链接</h4>
+      <p class="note">支持 <code>https://</code> 和 <code>webcal://</code>。多数学校服务器不允许网页跨域读取，失败时请改用上面的文件导入。</p>
+      <div class="row">
+        <input type="url" id="urlIn" placeholder="https://jwxt.example.edu.cn/calendar/xxx.ics" style="flex:1 1 240px">
+        <button class="btn primary" id="fetchUrl">拉取</button>
+      </div>
+    </section>
+
+    <section>
+      <h4>3 · 粘贴 ICS 文本</h4>
+      <p class="note">用文本编辑器打开 .ics，全选复制粘贴到这里。开头应该是 <code>BEGIN:VCALENDAR</code>。</p>
+      <textarea id="pasteIn" placeholder="BEGIN:VCALENDAR&#10;VERSION:2.0&#10;BEGIN:VEVENT&#10;..."></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="parsePaste">解析</button>
+        <button class="btn" id="loadDemo">载入示例课表</button>
+      </div>
+    </section>
+
+    <div id="importMsg"></div>
+  </div>
+</dialog>
+
+<!-- ============ settings dialog ============ -->
+<dialog id="settingsDlg">
+  <div class="dlg-head">
+    <h3>设置</h3>
+    <button class="btn" data-close>关闭</button>
+  </div>
+  <div class="dlg-body">
+
+    <section>
+      <h4>学期</h4>
+      <div class="field">
+        <label for="termStartIn">第 1 周的周一
+          <small>默认取课表里最早一节课所在的周。改错了周次会整体偏移。</small>
+        </label>
+        <input type="date" id="termStartIn">
+      </div>
+      <div class="field">
+        <label>共 <span class="mono" id="weekCount">—</span> 周<small>按课表里最后一节课推算</small></label>
+      </div>
+    </section>
+
+    <section>
+      <h4>显示</h4>
+      <div class="field">
+        <label for="swWeekend">显示周六周日<small>关掉后只显示周一到周五</small></label>
+        <button class="switch" id="swWeekend" aria-pressed="true" aria-label="显示周末"></button>
+      </div>
+      <div class="field">
+        <label for="zoomIn">时间轴缩放<small>每小时的像素高度</small></label>
+        <input type="number" id="zoomIn" min="34" max="200" step="6" style="width:84px">
+      </div>
+    </section>
+
+    <section>
+      <h4>课程</h4>
+      <div class="legend" id="legend"></div>
+    </section>
+
+    <section>
+      <h4>数据</h4>
+      <p class="note">课表存在这台设备的浏览器里，不会上传。JSON 备份可以再恢复回来。托管在 claude.ai 预览里时浏览器不允许页面触发下载，用「复制备份」把 JSON 存到别处即可。</p>
+      <div class="row">
+        <button class="btn" id="copyJson">复制备份</button>
+        <button class="btn" id="exportJson">下载备份文件</button>
+        <button class="btn" id="importJsonBtn">恢复备份</button>
+        <button class="btn danger" id="clearAll">清空课表</button>
+      </div>
+      <textarea id="backupOut" hidden style="margin-top:9px"></textarea>
+      <input type="file" id="jsonIn" accept=".json,application/json" hidden>
+      <div id="settingsMsg"></div>
+    </section>
+  </div>
+</dialog>
+
+<!-- ============ detail dialog ============ -->
+<dialog id="detailDlg">
+  <div class="detail-title" id="detailHead"></div>
+  <div class="dlg-body" id="detailBody"></div>
+  <div class="dlg-head" style="position:static;border-top:1px solid var(--rule);border-bottom:0;justify-content:flex-end">
+    <button class="btn" data-close>关闭</button>
+  </div>
+</dialog>
+
+<script src="app.js"></script>

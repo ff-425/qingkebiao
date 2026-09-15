@@ -1,0 +1,16 @@
+# Gradle / Android 构建产物
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+android/.cxx/
+.idea/
+*.iml
+
+# 本地打包出来的 PWA 压缩包，不进仓库
+qingkebiao-pwa.zip
+
+# 杂项
+.DS_Store
+Thumbs.db

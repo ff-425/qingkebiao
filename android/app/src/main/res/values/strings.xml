@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">清课表</string>
+    <string name="widget_today_label">清课表 · 今日课表</string>
+    <string name="widget_next_label">清课表 · 下一节</string>
+</resources>

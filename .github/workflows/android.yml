@@ -1,0 +1,68 @@
+name: Build APK
+
+# 每次推到 main 就出一个 APK，并更新 latest 这个 Release，
+# 于是手机上永远有一个固定的下载直链：
+#   https://github.com/<你的用户名>/<仓库名>/releases/latest/download/qingkebiao.apk
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:        # 也可以在 Actions 页面手动点一下构建
+
+permissions:
+  contents: write           # 发布 Release 需要
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # runner 自带 Android SDK，但显式装一次要用到的 platform/build-tools 更稳
+      - name: 准备 Android SDK
+        uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      # 不用 Gradle Wrapper —— 省掉一个二进制 jar，版本也由这里说了算
+      - name: 装 Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: 编译
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: 改个好认的文件名
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk out/qingkebiao.apk
+          ls -lh out
+
+      # 每次构建都留一份，方便回看历史版本
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: qingkebiao-apk
+          path: out/qingkebiao.apk
+          if-no-files-found: error
+
+      # 手机上用的固定直链就靠这一步
+      - name: 更新 latest Release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest out/qingkebiao.apk \
+            --title "清课表 最新构建" \
+            --notes "提交 ${GITHUB_SHA::7} 自动构建。手机浏览器直接点下面的 qingkebiao.apk 下载安装。" \
+            --prerelease
