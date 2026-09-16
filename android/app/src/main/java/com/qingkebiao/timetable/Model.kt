@@ -45,6 +45,15 @@ data class DayOverride(
     val note: String = ""
 )
 
+/**
+ * 内置的更新地址。
+ *
+ * 装上就能查更新，不用每个人自己去填一遍 —— 这个 App 是发给同学装的，
+ * 让每个人手打一个网址，那"应用内更新"这件事基本就废了。
+ * 设置里仍然可以改成别的地址，或者清空彻底关掉检查。
+ */
+const val DEFAULT_UPDATE_URL = "qingkebiao.pages.dev"
+
 /** 节次 → 时间。教务系统网页只给"第几节"，换算成具体时间要靠这张表。 */
 @Serializable
 data class PeriodSlot(val index: Int, val startMin: Int, val endMin: Int)
@@ -88,8 +97,8 @@ data class Timetable(
     val parserUsed: String = "",
     /** 作息表是怎么来的：sniffed(从网页读到) / derived(按分组推算) / manual(用户改过) */
     val periodsSource: String = "",
-    /** 检查更新的站点地址。空 = 不检查，一个网络请求都不会发。 */
-    val updateUrl: String = "",
+    /** 检查更新的站点地址。默认就是发包的那个站，清空 = 不检查，一个网络请求都不发。 */
+    val updateUrl: String = DEFAULT_UPDATE_URL,
     /** 上次和教务系统对过课表的日期。用来提醒"好久没查调课了"。 */
     val lastSyncEpochDay: Long? = null,
     /** 隔几天提醒一次去查调课。0 = 不提醒。 */

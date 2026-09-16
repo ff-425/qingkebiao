@@ -111,8 +111,8 @@ fun UpdateSheet(
             Label(pal, "更新地址")
             Hint(
                 pal,
-                "填你自己放更新包的站点，比如 xxx.pages.dev。" +
-                    "App 只会去这个地址问「有没有新版」，留空就完全不联网查。"
+                "已经预置好了，一般不用动。App 只会去这个地址问「有没有新版」，" +
+                    "清空就完全不联网查。"
             )
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
@@ -133,13 +133,22 @@ fun UpdateSheet(
                     onApply(tt.copy(updateUrl = url.trim()))
                     check()
                 }
+                if (url.trim() != DEFAULT_UPDATE_URL) {
+                    Spacer(Modifier.width(8.dp))
+                    OutlineChip(pal, "恢复默认") {
+                        url = DEFAULT_UPDATE_URL
+                        onApply(tt.copy(updateUrl = DEFAULT_UPDATE_URL))
+                        latest = null
+                        msg = "已恢复成默认地址。"
+                    }
+                }
                 if (tt.updateUrl.isNotBlank()) {
                     Spacer(Modifier.width(8.dp))
-                    OutlineChip(pal, "清除地址") {
+                    OutlineChip(pal, "关掉检查") {
                         url = ""
                         onApply(tt.copy(updateUrl = ""))
                         latest = null
-                        msg = "已清除，以后不再检查更新。"
+                        msg = "已关掉，以后不再检查更新。"
                     }
                 }
             }

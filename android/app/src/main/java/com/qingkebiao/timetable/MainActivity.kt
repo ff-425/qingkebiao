@@ -1290,8 +1290,8 @@ private fun SettingsDialog(
                 if (appVersion.isNotBlank()) "当前版本 v$appVersion" else "当前版本",
                 when {
                     hasUpdate -> "有新版可以更新"
-                    d.tt.updateUrl.isBlank() -> "还没设更新地址，不会联网检查"
-                    else -> "更新地址：${d.tt.updateUrl}"
+                    d.tt.updateUrl.isBlank() -> "已关掉检查，不会联网"
+                    else -> "自动检查：${d.tt.updateUrl}"
                 }
             ) {
                 OutlineChip(pal, if (hasUpdate) "去更新" else "检查更新", onClick = onOpenUpdate)

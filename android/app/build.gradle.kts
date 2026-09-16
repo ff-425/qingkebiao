@@ -18,8 +18,8 @@ android {
         // 每次发版都要涨。涨了系统才会拦住"装回旧版"——
         // 旧版读不懂新数据文件是唯一能把用户手动加的课和调休记录搞没的路径。
         // versionName 就用大版本号，和发给用户的 qingkebiao-vN.apk 对得上。
-        versionCode = 13
-        versionName = "13"
+        versionCode = 14
+        versionName = "14"
     }
 
     // 固定的 debug 签名。默认行为是用 ~/.android/debug.keystore，而 CI runner
