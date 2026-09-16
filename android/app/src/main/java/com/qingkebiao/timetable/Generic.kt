@@ -103,9 +103,30 @@ object Generic {
     private val LEADING_NUM = Regex("""^\s*(\d{1,2})\s*$""")
     private val WEEK_TEXT = Regex("""[\d,，\-－~至到单双周()（）]{2,}周""")
     private val PLACE_HINT = Regex("""[楼馆室厅场院区舍]|机房|实验|中心|校区""")
-    /** "教三-201""A104""综合楼301" 这类：几个字 + 房间号。带数字，所以不会和人名混。 */
-    private val ROOM_LIKE = Regex("""^[^\s]{0,8}[-－—_ ]?[A-Za-z]?\d{2,4}[室房]?$""")
+    /**
+     * "教三-201""A104""综合楼301" 这类：几个字 + 房间号。
+     * 前瞻那一段要求必须有一个既不是数字也不是分隔符的字符，否则 "1-16"
+     * 会被当成教室 —— OCR 把 "1-16周" 的周吃掉之后就正好长这样，实测踩到过。
+     */
+    private val ROOM_LIKE = Regex("""^(?=.*[^\d\-－—_ ])[^\s]{1,12}\d{1,4}[室房]?$""")
     private val CJK_NAME = Regex("""^[一-龥·]{2,4}(?:[,，、][一-龥·]{2,4})*$""")
+
+    /**
+     * OCR 出来的周次经常缺字或多字："1-16周"→"1-16"，"1-12周"→"1-123"。
+     * 只在图片/PDF 这种不可靠来源上启用，网页和 Excel 不需要放宽。
+     */
+    private val WEEK_LOOSE = Regex("""^[(（]?([单双])?[)）]?\s*(\d{1,2})\s*[-–—~至到]\s*(\d{1,3})\s*\D{0,2}$""")
+
+    private fun looseWeeks(s: String): String? {
+        val m = WEEK_LOOSE.find(s.trim()) ?: return null
+        val a = m.groupValues[2].toIntOrNull() ?: return null
+        var b = m.groupValues[3].toIntOrNull() ?: return null
+        // "1-123"：多出来的那一位多半是被认错的"周"，砍掉再看
+        if (b > 30) b /= 10
+        if (a < 1 || b < a || b > 30) return null
+        val od = m.groupValues[1]
+        return if (od.isNotEmpty()) "($od)$a-${b}周" else "$a-${b}周"
+    }
 
     private fun looksLikePlace(s: String): Boolean =
         PLACE_HINT.containsMatchIn(s) || (s.any { it.isDigit() } && ROOM_LIKE.matches(s))
@@ -116,24 +137,33 @@ object Generic {
             .map { it.groupValues[1] }
             .maxByOrNull { inner -> WEEKDAYS.count { d -> inner.contains("星期$d") || inner.contains("周$d") } }
             ?: throw ParseException("页面里没有表格。")
-        return fromGrid(toGrid(best), defaultWeeks)
+        return fromGrid(toGrid(best), defaultWeeks, loose = false)
     }
 
     /**
      * Excel / CSV 读出来的二维表走这里。合并单元格在 [Sheets] 那边已经展开过了，
      * 到这儿每一格都是独立的字符串。
      */
-    fun parseRows(rows: List<List<String>>, defaultWeeks: Int = 18): List<Zf.Block> {
+    fun parseRows(
+        rows: List<List<String>>,
+        defaultWeeks: Int = 18,
+        /** 来源是 OCR 时放宽周次识别，因为"周"字经常掉掉或认错 */
+        loose: Boolean = false
+    ): List<Zf.Block> {
         val grid: List<MutableList<Cell?>> = rows.map { r ->
             r.map { v ->
                 val lines = v.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
                 if (lines.isEmpty()) null else Cell(lines)
             }.toMutableList()
         }
-        return fromGrid(grid, defaultWeeks)
+        return fromGrid(grid, defaultWeeks, loose)
     }
 
-    private fun fromGrid(grid: List<List<Cell?>>, defaultWeeks: Int): List<Zf.Block> {
+    private fun fromGrid(
+        grid: List<List<Cell?>>,
+        defaultWeeks: Int,
+        loose: Boolean = false
+    ): List<Zf.Block> {
         var headerRow = -1
         var cols: Map<Int, Int> = emptyMap()
         for ((r, row) in grid.withIndex()) {
@@ -166,7 +196,10 @@ object Generic {
                 if (cell.text.isBlank() || !seen.add(key)) continue
 
                 val joined = lines.joinToString(" ")
-                val weeksRaw = WEEK_TEXT.find(joined)?.value ?: ""
+                var weeksRaw = WEEK_TEXT.find(joined)?.value ?: ""
+                if (weeksRaw.isBlank() && loose) {
+                    weeksRaw = lines.firstNotNullOfOrNull { looseWeeks(it) }.orEmpty()
+                }
                 val weeks = Zf.parseWeeks(weeksRaw).ifEmpty { (1..defaultWeeks).toList() }
 
                 val pm = PERIOD_IN_TEXT.find(joined)
@@ -187,7 +220,7 @@ object Generic {
                 // 在真实课表里比"最长"可靠得多。
                 fun isMeta(s: String) =
                     WEEK_TEXT.containsMatchIn(s) || PERIOD_IN_TEXT.containsMatchIn(s) ||
-                        SINGLE_PERIOD.matches(s.trim())
+                        SINGLE_PERIOD.matches(s.trim()) || (loose && looseWeeks(s) != null)
                 val titleIdx = lines.indexOfFirst { !isMeta(it) }
                 if (titleIdx < 0) continue
                 val title = lines[titleIdx].take(40).trim()

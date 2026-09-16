@@ -940,8 +940,9 @@ private fun ImportDialog(
             Label(pal, "2 · 从文件导入")
             Hint(
                 pal,
-                "学校发的总课表文件。Excel（.xlsx）和 CSV 现在就能读，" +
-                    "表格里得有「星期一…星期五」这样的表头。"
+                "学校发的总课表。Excel（.xlsx）、CSV、截图照片、PDF 都行。" +
+                    "表格里要有「星期一…星期五」这样的表头。" +
+                    "图片和 PDF 靠识别，会掉字，导入前务必对一遍。"
             )
             Spacer(Modifier.height(8.dp))
             PrimaryButton(pal, "选择文件") {
@@ -949,7 +950,7 @@ private fun ImportDialog(
                     arrayOf(
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         "text/csv", "text/comma-separated-values", "text/plain",
-                        "application/vnd.ms-excel", "*/*"
+                        "application/vnd.ms-excel", "application/pdf", "image/*", "*/*"
                     )
                 )
             }

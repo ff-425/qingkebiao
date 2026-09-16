@@ -18,8 +18,15 @@ android {
         // 每次发版都要涨。涨了系统才会拦住"装回旧版"——
         // 旧版读不懂新数据文件是唯一能把用户手动加的课和调休记录搞没的路径。
         // versionName 就用大版本号，和发给用户的 qingkebiao-vN.apk 对得上。
-        versionCode = 20
-        versionName = "20"
+        versionCode = 21
+        versionName = "21"
+
+        // OCR 带进来的原生库每个 ABI 都是十几兆，而一台手机只用得上一份。
+        // 默认只打 arm64-v8a（2017 年以后的安卓机几乎全是），
+        // 模拟器测试用 -PqkbAbi=x86_64。差别是 57 MB 跟 25 MB。
+        ndk {
+            abiFilters += (project.findProperty("qkbAbi") as String? ?: "arm64-v8a").split(",")
+        }
     }
 
     // 固定的 debug 签名。默认行为是用 ~/.android/debug.keystore，而 CI runner
@@ -79,4 +86,9 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+
+    // 图片/PDF 课表识别。用 bundled 版（模型打包进 APK）而不是
+    // 依赖 Google Play 服务的那个版本 —— 国内很多手机根本没装 GMS，
+    // 那个版本在用户手上就是直接不能用。代价是 APK 大一圈。
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
 }

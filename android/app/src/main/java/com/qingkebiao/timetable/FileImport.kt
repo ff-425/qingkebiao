@@ -71,17 +71,53 @@ object FileImport {
                 val rows = Sheets.readCsv(text)
                 Result(Generic.parseRows(rows), "csv", "CSV：${rows.size} 行")
             }
+            isPdf(data) || fileName.endsWith(".pdf") -> {
+                val rows = Ocr.readPdf(ctx, uri)
+                Result(Generic.parseRows(rows, loose = true), "pdf", ocrNote("PDF", rows))
+            }
+            isImage(data) || fileName.matches(Regex(""".*\.(jpe?g|png|webp|heic|heif|bmp)$""")) -> {
+                val rows = Ocr.readImage(ctx, uri)
+                Result(Generic.parseRows(rows, loose = true), "image", ocrNote("图片", rows))
+            }
             fileName.endsWith(".xls") -> throw Sheets.ParseException(
                 "这是老版 .xls 格式，读不了。用 Excel/WPS 打开另存为 .xlsx 再试。"
             )
-            fileName.endsWith(".pdf") -> throw Sheets.ParseException(
-                "PDF 还不支持。可以先截图或者导出成 Excel。"
-            )
             else -> throw Sheets.ParseException(
-                "不认识这个文件（$fileName）。目前支持 .xlsx 和 .csv。"
+                "不认识这个文件（$fileName）。支持 .xlsx、.csv、图片和 PDF。"
             )
         }
     }
+
+    /**
+     * OCR 最危险的失败不是认错字，是**整列没认出来**——
+     * 预览里少了两门课，不比对原图根本看不出来。实测拍歪 1.8°
+     * 的照片就丢了星期一整列。所以认出几天要明说。
+     */
+    private fun ocrNote(kind: String, rows: List<List<String>>): String {
+        val days = (rows.firstOrNull()?.size ?: 1) - 1
+        val lines = rows.size - 1
+        return buildString {
+            append("$kind：认出 $days 天 × $lines 行。")
+            if (days < 5) {
+                append("\n⚠ 只认出 $days 天，正常课表至少有 5 天 —— " +
+                    "很可能有整列没认出来。确认图没被裁、拍正一点再试，" +
+                    "有截图就用截图，比拍照准得多。")
+            }
+            append("\n下面逐条对一遍，错的导入后可以直接改。")
+        }
+    }
+
+    private fun startsWith(data: ByteArray, vararg b: Int): Boolean =
+        data.size >= b.size && b.indices.all { data[it] == b[it].toByte() }
+
+    private fun isPdf(data: ByteArray) = startsWith(data, 0x25, 0x50, 0x44, 0x46)  // %PDF
+
+    private fun isImage(data: ByteArray) =
+        startsWith(data, 0xFF, 0xD8, 0xFF) ||                                       // JPEG
+            startsWith(data, 0x89, 0x50, 0x4E, 0x47) ||                             // PNG
+            startsWith(data, 0x42, 0x4D) ||                                         // BMP
+            (data.size > 12 && String(data, 0, 4) == "RIFF" && String(data, 8, 4) == "WEBP") ||
+            (data.size > 12 && String(data, 4, 4) == "ftyp")                        // HEIC/HEIF
 
     /** 前 512 字节里没有 0 且大多是可见字符，就当文本。 */
     private fun looksLikeText(data: ByteArray): Boolean {
@@ -144,7 +180,10 @@ fun FileImportDialog(
                 Spacer(Modifier.height(12.dp))
                 Label(pal, "预览（确认对了再导入）")
                 val dow = "一二三四五六日"
-                r.blocks.sortedWith(compareBy({ it.weekday }, { it.startPeriod })).take(8).forEach { b ->
+                // OCR 来的必须全部列出来让人核对；Excel 可靠，列几条示意即可
+                val showAll = r.kind == "image" || r.kind == "pdf"
+                val shown = if (showAll) 40 else 8
+                r.blocks.sortedWith(compareBy({ it.weekday }, { it.startPeriod })).take(shown).forEach { b ->
                     Text(
                         "周${dow.getOrElse(b.weekday - 1) { '?' }} ${b.startPeriod}-${b.endPeriod}节  " +
                             "${b.title}" +
@@ -155,8 +194,8 @@ fun FileImportDialog(
                         fontFamily = FontFamily.Monospace, maxLines = 2
                     )
                 }
-                if (r.blocks.size > 8) {
-                    Text("…… 还有 ${r.blocks.size - 8} 个", color = pal.faint, fontSize = 11.sp)
+                if (r.blocks.size > shown) {
+                    Text("…… 还有 ${r.blocks.size - shown} 个", color = pal.faint, fontSize = 11.sp)
                 }
 
                 Spacer(Modifier.height(10.dp))
