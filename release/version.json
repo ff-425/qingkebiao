@@ -1,7 +1,7 @@
 {
-  "versionCode": 14,
-  "versionName": "14",
+  "versionCode": 18,
+  "versionName": "18",
   "url": "https://github.com/ff-425/qingkebiao/releases/download/latest/qingkebiao.apk",
-  "size": 11485477,
-  "notes": "上课前提醒；更新地址已内置，装上就能收到新版"
+  "size": 11485489,
+  "notes": "有新版本时，打开 App 直接弹提示（同一版本一天只弹一次）"
 }

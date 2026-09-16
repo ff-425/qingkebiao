@@ -230,13 +230,48 @@ fun UpdateSheet(
  * 启动时静默查一次。查不到就当没这回事 —— 更新提示不该因为没网就弹错误。
  */
 @Composable
-fun rememberUpdateCheck(updateUrl: String): Updater.Manifest? {
+fun rememberUpdateCheck(updateUrl: String, retryKey: Int = 0): Updater.Manifest? {
     val ctx = LocalContext.current
     var found by remember(updateUrl) { mutableStateOf<Updater.Manifest?>(null) }
-    LaunchedEffect(updateUrl) {
+    // retryKey 跟着"回到前台"变：打开时没网就查不到，下次回来要再试一次，
+    // 否则这一整个进程生命周期里都不会再查了
+    LaunchedEffect(updateUrl, retryKey) {
         if (updateUrl.isBlank()) return@LaunchedEffect
+        if (found != null) return@LaunchedEffect
         val m = runCatching { Updater.fetch(updateUrl) }.getOrNull() ?: return@LaunchedEffect
         if (m.versionCode > Updater.currentCode(ctx)) found = m
     }
     return found
+}
+
+/** 打开 App 发现新版时弹的那一下。横幅容易被划过去，这个不会。 */
+@Composable
+fun UpdatePrompt(
+    pal: Palette,
+    m: Updater.Manifest,
+    onLater: () -> Unit,
+    onUpdate: () -> Unit
+) {
+    Sheet(pal, "有新版本", onLater) {
+        Column {
+            Text(
+                "v${m.versionName.ifBlank { m.versionCode.toString() }}" +
+                    if (m.size > 0) "   %.1f MB".format(m.size / 1048576.0) else "",
+                color = pal.ink, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+            if (m.notes.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(m.notes, color = pal.ink2, fontSize = 13.sp, lineHeight = 19.sp)
+            }
+            Spacer(Modifier.height(10.dp))
+            Hint(pal, "覆盖安装，课表和设置都不会丢。")
+            Spacer(Modifier.height(16.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PrimaryButton(pal, "立即更新", onClick = onUpdate)
+                Spacer(Modifier.width(8.dp))
+                OutlineChip(pal, "稍后", onClick = onLater)
+            }
+        }
+    }
 }

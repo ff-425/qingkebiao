@@ -103,6 +103,9 @@ data class Timetable(
     val lastSyncEpochDay: Long? = null,
     /** 隔几天提醒一次去查调课。0 = 不提醒。 */
     val syncRemindDays: Int = 7,
+    /** 点过"稍后"的那个版本号，和点的那一天。同一版本一天只主动弹一次。 */
+    val updateSnoozeCode: Int = 0,
+    val updateSnoozeDay: Long = 0,
     /** 上课前提醒。默认关，开了才会申请通知权限、才会排闹钟。 */
     val remindEnabled: Boolean = false,
     /** 提前几分钟提醒。 */

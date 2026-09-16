@@ -142,7 +142,12 @@ private fun Home(pal: Palette, resumeTick: Int) {
 
     var recovered by remember { mutableStateOf<String?>(null) }
     var showUpdate by remember { mutableStateOf(false) }
-    val newVersion = rememberUpdateCheck(tt.updateUrl)
+    val newVersion = rememberUpdateCheck(tt.updateUrl, resumeTick)
+    // 同一个版本一天只主动弹一次。点了"稍后"今天就不再打扰，
+    // 顶上那条横幅一直留着 —— 想更新随时点得到，但不会每次切回来都糊你一脸
+    val showPrompt = newVersion != null && !showUpdate &&
+        !(tt.updateSnoozeCode == newVersion.versionCode &&
+            tt.updateSnoozeDay == LocalDate.now().toEpochDay())
 
     // 调课提醒。教务系统要登录才能看，没法真正后台静默查，
     // 所以退而求其次：隔几天提醒一次，点一下就进去对。
@@ -378,6 +383,18 @@ private fun Home(pal: Palette, resumeTick: Int) {
             pal = pal, tt = tt, found = newVersion,
             onClose = { showUpdate = false },
             onApply = { commit(it) }
+        )
+    } else if (showPrompt && newVersion != null) {
+        fun snooze() = commit(
+            tt.copy(
+                updateSnoozeCode = newVersion.versionCode,
+                updateSnoozeDay = LocalDate.now().toEpochDay()
+            )
+        )
+        UpdatePrompt(
+            pal = pal, m = newVersion,
+            onLater = { snooze() },
+            onUpdate = { snooze(); showUpdate = true }
         )
     }
     if (editorOpen) {
