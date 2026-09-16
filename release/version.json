@@ -2,6 +2,6 @@
   "versionCode": 21,
   "versionName": "21",
   "url": "https://github.com/ff-425/qingkebiao/releases/download/latest/qingkebiao.apk",
-  "size": 26534908,
-  "notes": "新增：图片 / PDF 课表识别（离线）。包变大是因为带了识别模型"
+  "size": 18431725,
+  "notes": "新增：图片 / PDF 课表识别，离线识别不联网"
 }

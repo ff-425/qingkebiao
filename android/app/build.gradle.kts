@@ -44,7 +44,12 @@ android {
 
     buildTypes {
         debug {
-            isMinifyEnabled = false
+            // 带上 OCR 模型之后包有 25.3 MiB，而 Cloudflare Pages 单文件上限
+            // 正好是 25 MiB —— 差 300 KB 传不上去。开 R8 顺手把 dex 砍一刀，
+            // 用户那边下载也少十几兆。
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
