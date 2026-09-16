@@ -1,7 +1,7 @@
 {
-  "versionCode": 20,
-  "versionName": "20",
+  "versionCode": 21,
+  "versionName": "21",
   "url": "https://github.com/ff-425/qingkebiao/releases/download/latest/qingkebiao.apk",
-  "size": 11501877,
-  "notes": "新增：上传 Excel/CSV 总课表直接导入"
+  "size": 26534908,
+  "notes": "新增：图片 / PDF 课表识别（离线）。包变大是因为带了识别模型"
 }
