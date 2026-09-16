@@ -927,7 +927,9 @@ private fun ImportDialog(
             Hint(
                 pal,
                 "打开内置浏览器，你自己登录、点到课表页面，再抓取。验证码、统一身份认证都由你本人处理，" +
-                    "不需要为学校单独写登录逻辑。"
+                    "不需要为学校单独写登录逻辑。\n" +
+                    "填的是网址，不是 App 名字 —— 形如 jwxt.xxx.edu.cn、ehall.xxx.edu.cn。" +
+                    "不知道就在电脑上打开教务系统，抄地址栏那一串。"
             )
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
@@ -937,14 +939,20 @@ private fun ImportDialog(
             )
             Spacer(Modifier.height(8.dp))
             PrimaryButton(pal, "打开并抓取", enabled = jwxtUrl.isNotBlank()) {
-                var u = jwxtUrl.trim()
-                if (!u.startsWith("http://") && !u.startsWith("https://")) u = "http://$u"
-                webImport.launch(
-                    Intent(ctx, WebImportActivity::class.java)
-                        .putExtra(WebImportActivity.EXTRA_URL, u)
-                        .putExtra(WebImportActivity.EXTRA_HOME, u)
-                        .putExtra(WebImportActivity.EXTRA_HAS_TERM, tt.termStartEpochDay != null)
-                )
+                val u = normalizeSiteUrl(jwxtUrl)
+                if (u == null) {
+                    err = true
+                    msg = "「${jwxtUrl.trim()}」不是网址。这里要填的是你在电脑浏览器里" +
+                        "打开教务系统时，地址栏上那一串，形如 jwxt.xxx.edu.cn 或 " +
+                        "ehall.xxx.edu.cn —— 不是 App 或门户的名字。"
+                } else {
+                    webImport.launch(
+                        Intent(ctx, WebImportActivity::class.java)
+                            .putExtra(WebImportActivity.EXTRA_URL, u)
+                            .putExtra(WebImportActivity.EXTRA_HOME, u)
+                            .putExtra(WebImportActivity.EXTRA_HAS_TERM, tt.termStartEpochDay != null)
+                    )
+                }
             }
 
             Spacer(Modifier.height(22.dp))

@@ -144,6 +144,34 @@ private const val GRAB_JS = """
 })()
 """
 
+/**
+ * 把用户填的东西整理成一个能打开的地址，整不出来就返回 null。
+ *
+ * 真实踩到的坑：有人在"网址"那栏填了学校门户 App 的名字「唐工e厅」，
+ * 代码老老实实拼成 http://唐工e厅，浏览器 punycode 成 xn--e-ry8a70coys，
+ * 然后报 ERR_NAME_NOT_RESOLVED —— 用户完全看不出自己填错了什么。
+ */
+fun normalizeSiteUrl(raw: String): String? {
+    var u = raw.trim().replace(" ", "").replace("　", "")
+    if (u.isEmpty()) return null
+    if (!u.startsWith("http://", true) && !u.startsWith("https://", true)) u = "http://$u"
+    val host = runCatching { java.net.URI(u).host }.getOrNull() ?: return null
+    if (host.isNullOrBlank()) return null
+    // 域名里出现非 ASCII，基本都是把中文名字当网址填了
+    if (host.any { it.code > 127 }) return null
+    if (!host.contains('.')) return null
+    return u
+}
+
+/** 页面打不开时，在我们自己的面板里说人话，而不是让用户对着 ERR_NAME_NOT_RESOLVED 发呆。 */
+private fun loadFailHint(detail: String?): String = buildString {
+    append("这一页打不开")
+    if (!detail.isNullOrBlank()) append("（$detail）")
+    append("。三个常见原因：地址填错了（要填 jwxt.xxx.edu.cn 这种，不是 App 名字）；")
+    append("这个系统只能校内网访问，得先连校园网或开学校的 VPN；")
+    append("或者学校服务器这会儿就是坏的，换个时间再试。")
+}
+
 @Composable
 private fun WebImportScreen(
     startUrl: String,
@@ -331,6 +359,31 @@ private fun WebImportScreen(
                                             autoTried = url
                                             view?.postDelayed({ capture(auto = true) }, 1200)
                                         }
+                                    }
+
+                                    // 地址根本打不开时，Android 会渲染一个自带的错误页，
+                                    // 用户只能看到 ERR_NAME_NOT_RESOLVED 这种东西。
+                                    // 在我们自己的面板里说人话。
+                                    override fun onReceivedError(
+                                        view: WebView?,
+                                        request: android.webkit.WebResourceRequest?,
+                                        error: android.webkit.WebResourceError?
+                                    ) {
+                                        if (request?.isForMainFrame != true) return
+                                        err = true
+                                        msg = loadFailHint(error?.description?.toString())
+                                    }
+
+                                    // DNS 失败走上面那个，服务器返回 4xx/5xx 走这个。
+                                    // 只认主文档，页面里某张图片 404 不该弹提示。
+                                    override fun onReceivedHttpError(
+                                        view: WebView?,
+                                        request: android.webkit.WebResourceRequest?,
+                                        response: android.webkit.WebResourceResponse?
+                                    ) {
+                                        if (request?.isForMainFrame != true) return
+                                        err = true
+                                        msg = loadFailHint("HTTP ${response?.statusCode ?: "?"}")
                                     }
 
                                     override fun doUpdateVisitedHistory(
