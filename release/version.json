@@ -1,7 +1,7 @@
 {
-  "versionCode": 19,
-  "versionName": "19",
+  "versionCode": 20,
+  "versionName": "20",
   "url": "https://github.com/ff-425/qingkebiao/releases/download/latest/qingkebiao.apk",
-  "size": 11877058,
-  "notes": "地址填错时会直接告诉你错在哪，不再报一串英文错误"
+  "size": 11501877,
+  "notes": "新增：上传 Excel/CSV 总课表直接导入"
 }
