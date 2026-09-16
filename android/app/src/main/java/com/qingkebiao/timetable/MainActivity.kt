@@ -165,6 +165,8 @@ private fun Home(pal: Palette, resumeTick: Int) {
     // 首次打开先装示例，让人立刻看见这东西长什么样（不落盘，导入真课表即覆盖）
     LaunchedEffect(Unit) {
         val stored = Store.load(ctx)
+        // 装了新版、或者上次退出后闹钟被系统清了，开一次 App 就补回来
+        Reminders.reschedule(ctx, stored)
         recovered = Store.lastRecovery
         tt = if (stored.sessions.isNotEmpty()) stored else stored.copy(
             sessions = runCatching { Ics.parse(DEMO_ICS) }.getOrDefault(emptyList()),
@@ -200,6 +202,8 @@ private fun Home(pal: Palette, resumeTick: Int) {
         scope.launch {
             Store.save(ctx, next)
             refreshWidgets(ctx)
+            // 课表一变，已经排好的提醒闹钟就都作废了，重排
+            Reminders.reschedule(ctx, next)
         }
     }
 
@@ -989,6 +993,12 @@ private fun SettingsDialog(
     var confirmRefetch by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
 
+    // 权限状态是系统里的，Compose 感知不到变化；从系统设置页回来后靠这个刷一下
+    var permTick by remember { mutableIntStateOf(0) }
+    val notifPerm = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { permTick++ }
+
     var corrupt by remember { mutableStateOf(Store.corruptFiles(ctx)) }
     var pendingExport by remember { mutableStateOf<File?>(null) }
     // 隔离起来的文件在应用私有目录里，手机上翻不到。能导出来才叫"留着"。
@@ -1072,6 +1082,75 @@ private fun SettingsDialog(
             OutlineChip(pal, "添加调休") { onEditOverride(LocalDate.now()) }
             Spacer(Modifier.height(4.dp))
             Hint(pal, "点进去可以选任意一天，不限于今天 —— 调休通知一般提前发。")
+
+            Spacer(Modifier.height(22.dp))
+            Label(pal, "上课提醒")
+            Hint(pal, "上课前推一条通知。调休算数：放假那天不会响，调过来的课按新日期响。")
+            Spacer(Modifier.height(8.dp))
+            FieldRow(pal, "开启提醒", if (d.tt.remindEnabled) "当前：开" else "当前：关") {
+                OutlineChip(pal, if (d.tt.remindEnabled) "关掉" else "打开") {
+                    val turningOn = !d.tt.remindEnabled
+                    if (turningOn && android.os.Build.VERSION.SDK_INT >= 33) {
+                        notifPerm.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    onApply(d.tt.copy(remindEnabled = turningOn))
+                    permTick++
+                }
+            }
+            if (d.tt.remindEnabled) {
+                FieldRow(pal, "提前多久", "上课前 ${d.tt.remindMinutes} 分钟") {
+                    IntStepper(pal, d.tt.remindMinutes, 0, 120, 5, " 分") {
+                        onApply(d.tt.copy(remindMinutes = it))
+                    }
+                }
+
+                // 权限状态。这两样任何一个没给，提醒就是哑的 —— 必须说出来，
+                // 不然用户开了开关以为好了，等漏了课才发现
+                val canPost = remember(permTick) { Reminders.canPost(ctx) }
+                val canExact = remember(permTick) { Reminders.canExact(ctx) }
+                if (!canPost) {
+                    Spacer(Modifier.height(6.dp))
+                    MsgBox(pal, "系统里这个 App 的通知是关的，提醒发不出来。", error = true)
+                    Spacer(Modifier.height(6.dp))
+                    OutlineChip(pal, "去开通知") {
+                        Reminders.openNotificationSettings(ctx); permTick++
+                    }
+                }
+                if (!canExact) {
+                    Spacer(Modifier.height(6.dp))
+                    MsgBox(
+                        pal,
+                        "没有「闹钟和提醒」权限，系统可能把提醒推迟十几分钟才发，提前量就不准了。",
+                        error = true
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlineChip(pal, "去开精确闹钟") {
+                        Reminders.openExactAlarmSettings(ctx); permTick++
+                    }
+                }
+
+                Spacer(Modifier.height(6.dp))
+                val next3 = remember(d, d.tt.remindMinutes) {
+                    d.upcoming(System.currentTimeMillis(), 3)
+                }
+                if (next3.isEmpty()) {
+                    Hint(pal, "接下来没有课，暂时没有要提醒的。")
+                } else {
+                    Hint(pal, "接下来会在这几个时间点响：")
+                    next3.forEach { s ->
+                        Text(
+                            "  ${(s.start - d.tt.remindMinutes * 60_000L).hhmm()}  →  " +
+                                "${s.title} ${s.start.toLocalDate().abbr()} ${s.start.hhmm()}",
+                            color = pal.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlineChip(pal, "试一条") { Reminders.testNotify(ctx, d.tt.remindMinutes); permTick++ }
+                Spacer(Modifier.height(6.dp))
+                Hint(pal, "小米还要把本应用加进「自启动」和省电白名单，否则后台会被杀，提醒就不响了。")
+            }
 
             if (d.tt.jwxtPage.isNotBlank()) {
                 Spacer(Modifier.height(22.dp))

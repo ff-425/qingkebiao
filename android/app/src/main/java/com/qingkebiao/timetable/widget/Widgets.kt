@@ -36,6 +36,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.qingkebiao.timetable.Reminders
 import com.qingkebiao.timetable.Derived
 import com.qingkebiao.timetable.MainActivity
 import com.qingkebiao.timetable.Session
@@ -309,6 +310,11 @@ fun scheduleWidgetRefresh(context: Context) {
 class WidgetRefreshWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
         refreshWidgets(applicationContext)
+        // 顺手把上课提醒的闹钟重排一遍。只排接下来几节课，
+        // 靠这个定期任务把队列续上，就不用担心用户好几天不开 App。
+        runCatching {
+            Reminders.reschedule(applicationContext, Store.load(applicationContext))
+        }
         return Result.success()
     }
 }

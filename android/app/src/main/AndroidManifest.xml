@@ -10,6 +10,18 @@
     -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!--
+        上课提醒。只有用户在设置里打开了才会真的用到。
+        精确闹钟是必须的：提醒晚几分钟等于没提醒。
+        USE_EXACT_ALARM 是给闹钟/日程类应用的，安装即授予；
+        老系统（≤12）走 SCHEDULE_EXACT_ALARM。
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission
+        android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -36,6 +48,21 @@
             android:exported="false"
             android:label="教务系统导入"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- 上课提醒的闹钟回调 -->
+        <receiver
+            android:name=".ReminderReceiver"
+            android:exported="false" />
+
+        <!-- 开机后系统会把所有闹钟清掉，得重排一次 -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
         <!-- 下载好的更新包要交给系统安装器，file:// 从 Android 7 起就不让传了 -->
         <provider

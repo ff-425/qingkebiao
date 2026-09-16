@@ -93,7 +93,11 @@ data class Timetable(
     /** 上次和教务系统对过课表的日期。用来提醒"好久没查调课了"。 */
     val lastSyncEpochDay: Long? = null,
     /** 隔几天提醒一次去查调课。0 = 不提醒。 */
-    val syncRemindDays: Int = 7
+    val syncRemindDays: Int = 7,
+    /** 上课前提醒。默认关，开了才会申请通知权限、才会排闹钟。 */
+    val remindEnabled: Boolean = false,
+    /** 提前几分钟提醒。 */
+    val remindMinutes: Int = 15
 )
 
 fun Long.toLocalDateTime(zone: ZoneId = ZoneId.systemDefault()): LocalDateTime =
@@ -202,6 +206,13 @@ class Derived(val tt: Timetable, val zone: ZoneId = ZoneId.systemDefault()) {
         effectiveWindow(now).firstOrNull { it.start > now }
         // 窗口外（比如假期后才开学）兜底扫一遍原始数据
             ?: tt.sessions.filter { it.start > now }.minByOrNull { it.start }
+
+    /**
+     * 接下来要上的几节课，已应用调休。排提醒闹钟用的。
+     * 走 sessionsOn 而不是直接扫 sessions —— 放假那天不该响，调过来的课该响。
+     */
+    fun upcoming(now: Long = System.currentTimeMillis(), limit: Int = 12): List<Session> =
+        effectiveWindow(now).filter { it.start > now }.take(limit)
 
     /**
      * 同一门课有哪几种固定安排。
