@@ -1,7 +1,7 @@
 {
-  "versionCode": 12,
-  "versionName": "12",
+  "versionCode": 13,
+  "versionName": "13",
   "url": "https://github.com/ff-425/qingkebiao/releases/download/latest/qingkebiao.apk",
-  "size": 11468889,
-  "notes": "新增：查教务系统有没有调课，变动先列给你看，你确认了才改"
+  "size": 11870994,
+  "notes": "新增：上课前提醒，开关和提前多少分钟都能调"
 }
