@@ -889,31 +889,12 @@ private fun ImportDialog(
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var jwxtUrl by remember { mutableStateOf(tt.jwxtHome) }
-    var url by remember { mutableStateOf(tt.icsUrl) }
-    var paste by remember { mutableStateOf("") }
     var msg by remember { mutableStateOf<String?>(null) }
     var err by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-
-    fun runImport(label: String, url2: String = "", block: suspend () -> String) {
-        busy = true; err = false; msg = "处理中…"
-        scope.launch {
-            val r = runCatching { Store.importIcs(ctx, block(), label, url2) }
-            busy = false
-            r.fold(
-                onSuccess = {
-                    onImported(it)
-                    val courses = it.sessions.map { s -> s.title }.distinct().size
-                    err = false
-                    msg = "导入成功：$courses 门课、${it.sessions.size} 节。周次不对就到设置里改开学日期。"
-                },
-                onFailure = { err = true; msg = "导入失败：${it.message ?: it.toString()}" }
-            )
-        }
-    }
+    var picked by remember { mutableStateOf<Uri?>(null) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) runImport("本地文件") { Store.readUri(ctx, uri) }
+        if (uri != null) { err = false; msg = null; picked = uri }
     }
     val webImport = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -956,40 +937,21 @@ private fun ImportDialog(
             }
 
             Spacer(Modifier.height(22.dp))
-            Label(pal, "2 · 从 .ics 文件导入")
-            Spacer(Modifier.height(4.dp))
-            PrimaryButton(pal, "选择 .ics 文件") {
-                picker.launch(arrayOf("text/calendar", "text/plain", "application/octet-stream", "*/*"))
-            }
-
-            Spacer(Modifier.height(22.dp))
-            Label(pal, "3 · 直接拉 ICS 订阅链接")
-            Hint(pal, "原生没有 CORS 限制，学校的订阅链接可以直接拉。支持 webcal:// 开头。")
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = url, onValueChange = { url = it },
-                placeholder = { Text("https://….ics", fontSize = 12.sp) },
-                singleLine = true, modifier = Modifier.fillMaxWidth()
+            Label(pal, "2 · 从文件导入")
+            Hint(
+                pal,
+                "学校发的总课表文件。Excel（.xlsx）和 CSV 现在就能读，" +
+                    "表格里得有「星期一…星期五」这样的表头。"
             )
             Spacer(Modifier.height(8.dp))
-            PrimaryButton(pal, if (busy) "拉取中…" else "拉取并导入", enabled = url.isNotBlank() && !busy) {
-                runImport("订阅链接", url.trim()) { Store.fetchIcs(url) }
-            }
-
-            Spacer(Modifier.height(22.dp))
-            Label(pal, "4 · 粘贴 ICS 文本")
-            OutlinedTextField(
-                value = paste, onValueChange = { paste = it },
-                placeholder = { Text("BEGIN:VCALENDAR …", fontSize = 12.sp) },
-                minLines = 3, maxLines = 6, modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(8.dp))
-            Row {
-                PrimaryButton(pal, "解析", enabled = paste.isNotBlank() && !busy) {
-                    runImport("粘贴的文本") { paste }
-                }
-                Spacer(Modifier.width(8.dp))
-                OutlineChip(pal, "载入示例") { runImport("示例课表") { DEMO_ICS } }
+            PrimaryButton(pal, "选择文件") {
+                picker.launch(
+                    arrayOf(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "text/csv", "text/comma-separated-values", "text/plain",
+                        "application/vnd.ms-excel", "*/*"
+                    )
+                )
             }
 
             msg?.let {
@@ -997,6 +959,14 @@ private fun ImportDialog(
                 MsgBox(pal, it, err)
             }
         }
+    }
+
+    picked?.let { uri ->
+        FileImportDialog(
+            pal = pal, tt = tt, uri = uri,
+            onClose = { picked = null },
+            onImported = { onImported(it) }
+        )
     }
 }
 

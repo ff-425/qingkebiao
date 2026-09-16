@@ -10,8 +10,12 @@ package com.qingkebiao.timetable
  * 明确是尽力而为，所以调用方**必须**先把结果给用户看再导入 —— 猜错了用户一眼
  * 能看出来，不会把垃圾写进课表。
  *
- * 唯一不靠猜的部分是表格展开：rowspan/colspan 按 HTML 表格语义还原成网格，
- * 这是确定的规则。连堂课通常就是靠 rowspan 合并的，不展开就对不上列。
+ * 同一套逻辑同时服务两种来源：网页里的 <table>，和 Excel/CSV 读出来的二维表
+ * （见 [Sheets]）。两边唯一的区别只是"怎么得到格子"，格子拿到以后
+ * 判断哪列是星期几、哪行是第几节、格子里哪行是地点哪行是老师，是完全一样的。
+ *
+ * 唯一不靠猜的部分是表格展开：rowspan/colspan（Excel 里是合并单元格）
+ * 按确定语义还原成网格。连堂课通常就是靠合并出来的，不展开就对不上列。
  */
 object Generic {
 
@@ -24,7 +28,7 @@ object Generic {
     private val SPAN_ATTR = { name: String -> Regex("""$name\s*=\s*["']?(\d+)""", RegexOption.IGNORE_CASE) }
     private val BR = Regex("""<br\s*/?>|</p>|</div>|</li>""", opts())
     private val TAG = Regex("""<[^>]+>""")
-    private val WS_LINE = Regex("""[ \t ]+""")
+    private val WS_LINE = Regex("""[ \t ]+""")
 
     private val WEEKDAYS = listOf("一", "二", "三", "四", "五", "六", "日", "天")
 
@@ -41,12 +45,13 @@ object Generic {
             .map { WS_LINE.replace(it, " ").trim() }
             .filter { it.isNotEmpty() }
 
-    private fun plain(html: String) = cellLines(html).joinToString(" ")
-
-    private class Cell(val html: String, val text: String)
+    /** 一个格子，只关心"里面有哪几行字"。HTML 和 Excel 到这一步就没区别了。 */
+    private class Cell(val lines: List<String>) {
+        val text: String = lines.joinToString(" ")
+    }
 
     /**
-     * 把一张表展开成规整网格，rowspan/colspan 都落到实际占据的每个位置。
+     * 把一张 HTML 表展开成规整网格，rowspan/colspan 都落到实际占据的每个位置。
      * 这是 HTML 表格的确定语义，不是启发式。
      */
     private fun toGrid(tableInner: String): List<MutableList<Cell?>> {
@@ -64,7 +69,7 @@ object Generic {
                 val cs = SPAN_ATTR("colspan").find(attrs)?.groupValues?.get(1)?.toIntOrNull() ?: 1
                 // 跳过已被上方 rowspan 占掉的位置
                 while (c < rowAt(r).size && rowAt(r)[c] != null) c++
-                val cell = Cell(inner, plain(inner))
+                val cell = Cell(cellLines(inner))
                 for (dr in 0 until rs.coerceIn(1, 30)) {
                     val rr = rowAt(r + dr)
                     for (dc in 0 until cs.coerceIn(1, 30)) {
@@ -97,8 +102,13 @@ object Generic {
     private val SINGLE_PERIOD = Regex("""第?\s*(\d+)\s*节""")
     private val LEADING_NUM = Regex("""^\s*(\d{1,2})\s*$""")
     private val WEEK_TEXT = Regex("""[\d,，\-－~至到单双周()（）]{2,}周""")
-    private val PLACE_HINT = Regex("""[楼馆室厅场院区舍]|机房|教\d|实验|中心|校区""")
+    private val PLACE_HINT = Regex("""[楼馆室厅场院区舍]|机房|实验|中心|校区""")
+    /** "教三-201""A104""综合楼301" 这类：几个字 + 房间号。带数字，所以不会和人名混。 */
+    private val ROOM_LIKE = Regex("""^[^\s]{0,8}[-－—_ ]?[A-Za-z]?\d{2,4}[室房]?$""")
     private val CJK_NAME = Regex("""^[一-龥·]{2,4}(?:[,，、][一-龥·]{2,4})*$""")
+
+    private fun looksLikePlace(s: String): Boolean =
+        PLACE_HINT.containsMatchIn(s) || (s.any { it.isDigit() } && ROOM_LIKE.matches(s))
 
     fun parse(html: String, defaultWeeks: Int = 18): List<Zf.Block> {
         // 选星期表头最多的那张表
@@ -106,15 +116,33 @@ object Generic {
             .map { it.groupValues[1] }
             .maxByOrNull { inner -> WEEKDAYS.count { d -> inner.contains("星期$d") || inner.contains("周$d") } }
             ?: throw ParseException("页面里没有表格。")
+        return fromGrid(toGrid(best), defaultWeeks)
+    }
 
-        val grid = toGrid(best)
+    /**
+     * Excel / CSV 读出来的二维表走这里。合并单元格在 [Sheets] 那边已经展开过了，
+     * 到这儿每一格都是独立的字符串。
+     */
+    fun parseRows(rows: List<List<String>>, defaultWeeks: Int = 18): List<Zf.Block> {
+        val grid: List<MutableList<Cell?>> = rows.map { r ->
+            r.map { v ->
+                val lines = v.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+                if (lines.isEmpty()) null else Cell(lines)
+            }.toMutableList()
+        }
+        return fromGrid(grid, defaultWeeks)
+    }
+
+    private fun fromGrid(grid: List<List<Cell?>>, defaultWeeks: Int): List<Zf.Block> {
         var headerRow = -1
         var cols: Map<Int, Int> = emptyMap()
         for ((r, row) in grid.withIndex()) {
             val m = weekdayColumns(row)
             if (m.size >= 3) { headerRow = r; cols = m; break }
         }
-        if (headerRow < 0) throw ParseException("找不到「星期一…星期日」这样的表头，没法判断哪一列是星期几。")
+        if (headerRow < 0) {
+            throw ParseException("找不到「星期一…星期日」这样的表头，没法判断哪一列是星期几。")
+        }
 
         val out = ArrayList<Zf.Block>()
         val seen = HashSet<String>()
@@ -130,10 +158,10 @@ object Generic {
 
             for ((ci, weekday) in cols) {
                 val cell = row.getOrNull(ci) ?: continue
-                val lines = cellLines(cell.html)
+                val lines = cell.lines
                 if (lines.isEmpty()) continue
 
-                // 同一个 cell 因为 rowspan 会在多行重复出现，去重
+                // 同一个 cell 因为合并会在多行重复出现，去重
                 val key = "$weekday|${cell.text}"
                 if (cell.text.isBlank() || !seen.add(key)) continue
 
@@ -153,21 +181,29 @@ object Generic {
                 }
                 if (p1 < 1 || p1 > 30) continue
 
-                // 逐行判定：地点 / 教师 / 其余最长的当课程名
+                // 课程名取第一行（跳过纯周次/节次那种行）。
+                // 曾经是"剩下的行里最长的那个"，结果 "高等数学/1-16周/教三-201/王伟"
+                // 里选中了 "教三-201" —— 它更长。第一行是课程名这件事，
+                // 在真实课表里比"最长"可靠得多。
+                fun isMeta(s: String) =
+                    WEEK_TEXT.containsMatchIn(s) || PERIOD_IN_TEXT.containsMatchIn(s) ||
+                        SINGLE_PERIOD.matches(s.trim())
+                val titleIdx = lines.indexOfFirst { !isMeta(it) }
+                if (titleIdx < 0) continue
+                val title = lines[titleIdx].take(40).trim()
+                if (title.length < 2) continue
+
                 var place = ""
                 var teacher = ""
-                val rest = ArrayList<String>()
-                for (l in lines) {
+                for ((li, l) in lines.withIndex()) {
                     when {
-                        l === lines.first() -> rest.add(l)              // 第一行几乎总是课程名
-                        WEEK_TEXT.containsMatchIn(l) || PERIOD_IN_TEXT.containsMatchIn(l) -> Unit
-                        place.isEmpty() && PLACE_HINT.containsMatchIn(l) -> place = l
+                        li == titleIdx -> Unit
+                        isMeta(l) -> Unit
+                        place.isEmpty() && looksLikePlace(l) -> place = l
                         teacher.isEmpty() && CJK_NAME.matches(l) -> teacher = l
-                        else -> rest.add(l)
+                        else -> Unit
                     }
                 }
-                val title = rest.maxByOrNull { it.length }?.take(40)?.trim().orEmpty()
-                if (title.isBlank() || title.length < 2) continue
 
                 out.add(
                     Zf.Block(
