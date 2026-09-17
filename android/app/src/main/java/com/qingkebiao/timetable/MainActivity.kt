@@ -988,6 +988,7 @@ private fun SettingsDialog(
     var confirmResync by remember { mutableStateOf(false) }
     var confirmRefetch by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    var confirmLogout by remember { mutableStateOf(false) }
 
     // 权限状态是系统里的，Compose 感知不到变化；从系统设置页回来后靠这个刷一下
     var permTick by remember { mutableIntStateOf(0) }
@@ -1312,6 +1313,30 @@ private fun SettingsDialog(
                 }
             ) {
                 OutlineChip(pal, if (hasUpdate) "去更新" else "检查更新", onClick = onOpenUpdate)
+            }
+
+            Spacer(Modifier.height(22.dp))
+            Label(pal, "隐私")
+            Hint(
+                pal,
+                "你是在内置浏览器里登录教务系统的，登录状态会留着 —— " +
+                    "所以「查调课」不用每次重登。手机要借人或者不放心，就清掉。"
+            )
+            Spacer(Modifier.height(8.dp))
+            if (!confirmLogout) {
+                OutlineChip(pal, "退出教务系统登录") { confirmLogout = true }
+            } else {
+                MsgBox(pal, "清掉内置浏览器里的 Cookie 和缓存。已经导入的课表不受影响，只是下次查调课要重新登录。")
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DangerChip(pal, "确认退出") {
+                        WebSession.clear(ctx)
+                        confirmLogout = false
+                        msg = "已清除登录状态。下次导入或查调课需要重新登录。"
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    OutlineChip(pal, "取消") { confirmLogout = false }
+                }
             }
 
             Spacer(Modifier.height(22.dp))

@@ -1,5 +1,6 @@
 package com.qingkebiao.timetable
 
+import android.content.Context
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.WebView
@@ -161,6 +162,25 @@ fun normalizeSiteUrl(raw: String): String? {
     if (host.any { it.code > 127 }) return null
     if (!host.contains('.')) return null
     return u
+}
+
+/**
+ * 内置浏览器里的登录状态。
+ *
+ * 用户是在这个 WebView 里登录教务系统的，Cookie 会一直留着 —— 这正是
+ * "重新同步不用再登一遍"的原因，但也意味着那张登录凭证长期躺在手机上。
+ * App 自己不读它、不上传，可手机借人、丢了、被别的应用翻到，就不好说了。
+ * 所以得给个明确的退出口子。
+ */
+object WebSession {
+    fun clear(ctx: Context) {
+        val cm = CookieManager.getInstance()
+        cm.removeAllCookies(null)
+        cm.flush()
+        runCatching { android.webkit.WebStorage.getInstance().deleteAllData() }
+        // 缓存里可能留着课表页面本身（含姓名学号），一并清掉
+        runCatching { WebView(ctx).apply { clearCache(true); destroy() } }
+    }
 }
 
 /** 页面打不开时，在我们自己的面板里说人话，而不是让用户对着 ERR_NAME_NOT_RESOLVED 发呆。 */

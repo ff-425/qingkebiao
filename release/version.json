@@ -1,7 +1,7 @@
 {
-  "versionCode": 22,
-  "versionName": "22",
+  "versionCode": 23,
+  "versionName": "23",
   "url": "https://qingkebiao.pages.dev/qingkebiao.apk",
-  "size": 18431725,
-  "notes": "换了发布签名（安全修复）。**这一版必须先卸载再装**：先到 设置→数据 导出备份，卸载后装新版再恢复。同时新增备份 / 恢复功能。"
+  "size": 18448109,
+  "notes": "新增：退出教务系统登录（设置→隐私）、备份 / 恢复。如果你还在 v21 以前，直接点更新会装不上（换了签名），找我要过渡包。"
 }
