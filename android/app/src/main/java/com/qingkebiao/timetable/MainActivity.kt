@@ -995,6 +995,27 @@ private fun SettingsDialog(
         ActivityResultContracts.RequestPermission()
     ) { permTick++ }
 
+    val backupExport = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            runCatching { Store.exportTo(ctx, uri) }.fold(
+                onSuccess = { msg = "已导出 $it 节课的备份。换手机或重装后用「从备份恢复」读回来。" },
+                onFailure = { msg = "导出失败：${it.message}" }
+            )
+        }
+    }
+    val backupImport = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            runCatching { Store.restoreFrom(ctx, uri) }.fold(
+                onSuccess = { onApply(it); msg = "已恢复 ${it.sessions.size} 节课。" },
+                onFailure = { msg = "恢复失败：${it.message}" }
+            )
+        }
+    }
+
     var corrupt by remember { mutableStateOf(Store.corruptFiles(ctx)) }
     var pendingExport by remember { mutableStateOf<File?>(null) }
     // 隔离起来的文件在应用私有目录里，手机上翻不到。能导出来才叫"留着"。
@@ -1295,7 +1316,17 @@ private fun SettingsDialog(
 
             Spacer(Modifier.height(22.dp))
             Label(pal, "数据")
-            Hint(pal, "课表只存在这台手机上，不上传。手动添加的条目在重新导入时会保留。")
+            Hint(
+                pal,
+                "课表只存在这台手机上，不上传。手动添加的条目在重新导入时会保留。" +
+                    "换手机、卸载重装之前先导出一份备份。"
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PrimaryButton(pal, "导出备份") { backupExport.launch(Store.backupName()) }
+                Spacer(Modifier.width(8.dp))
+                OutlineChip(pal, "从备份恢复") { backupImport.launch(arrayOf("application/json", "*/*")) }
+            }
 
             if (corrupt.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))

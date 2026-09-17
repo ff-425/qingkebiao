@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -18,8 +20,8 @@ android {
         // 每次发版都要涨。涨了系统才会拦住"装回旧版"——
         // 旧版读不懂新数据文件是唯一能把用户手动加的课和调休记录搞没的路径。
         // versionName 就用大版本号，和发给用户的 qingkebiao-vN.apk 对得上。
-        versionCode = 21
-        versionName = "21"
+        versionCode = 22
+        versionName = "22"
 
         // OCR 带进来的原生库每个 ABI 都是十几兆，而一台手机只用得上一份。
         // 默认只打 arm64-v8a（2017 年以后的安卓机几乎全是），
@@ -29,11 +31,27 @@ android {
         }
     }
 
-    // 固定的 debug 签名。默认行为是用 ~/.android/debug.keystore，而 CI runner
-    // 每次都是全新环境、每次生成的 key 都不同 —— 结果是两次构建出来的包互相装不上，
-    // 每次更新都要先卸载、数据全丢。把 keystore 放进仓库，本地和 CI 就永远一致。
-    // 这是 debug 签名，口令是众所周知的 android，不用于任何发布用途。
+    // 发布签名。
+    //
+    // 以前这里用的是仓库里那个 debug.keystore，口令就是众所周知的 "android" ——
+    // 意味着任何人都能签一个同名包直接覆盖安装到用户手机上，系统不会有任何提示。
+    // 现在换成真正的 release key：文件和口令都在 keystore.properties 里，
+    // 那个文件不进仓库。
+    //
+    // 拿不到 keystore.properties（比如 CI、或者别人 clone 了仓库）就退回 debug 签名，
+    // 这样代码照样能编过 —— 但那样出来的包装不到用户手机上，也不该拿去分发。
     signingConfigs {
+        create("release") {
+            val props = Properties()
+            val f = rootProject.file("keystore.properties")
+            if (f.exists()) {
+                f.inputStream().use { props.load(it) }
+                storeFile = rootProject.file(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
         getByName("debug") {
             storeFile = file("../debug.keystore")
             storePassword = "android"
@@ -41,6 +59,8 @@ android {
             keyPassword = "android"
         }
     }
+
+    val hasReleaseKey = rootProject.file("keystore.properties").exists()
 
     buildTypes {
         debug {
@@ -50,12 +70,18 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            // 我们只发这一个构建类型，所以 debug 也用 release key 签
+            signingConfig =
+                if (hasReleaseKey) signingConfigs.getByName("release")
+                else signingConfigs.getByName("debug")
         }
         release {
-            isMinifyEnabled = false
-            // 个人自用，直接拿 debug 签名，省掉 keystore 这一套
-            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig =
+                if (hasReleaseKey) signingConfigs.getByName("release")
+                else signingConfigs.getByName("debug")
         }
     }
 

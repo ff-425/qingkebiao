@@ -20,3 +20,8 @@ Thumbs.db
 
 # 传 Cloudflare 的那个文件夹里有 APK，不进仓库（模板在 release/）
 cloudflare-upload/
+
+# 发布签名：keystore 和口令都不进仓库。丢了就没法给已安装用户推更新了，
+# 这两样必须单独备份。
+android/keystore.properties
+android/qingkebiao-release.jks

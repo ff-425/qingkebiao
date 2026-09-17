@@ -100,16 +100,15 @@ jobs:
           path: out/qingkebiao.apk
           if-no-files-found: error
 
-      # 手机上用的固定直链就靠这一步
-      - name: 更新 latest Release
+      # 不再把 CI 的包发成可安装的 Release。
+      # 发布签名的 keystore 不在仓库里，所以 CI 构建出来的包是
+      # debug 签名 —— 它装不到用户手机上（签名对不上），
+      # 放在 Release 里只会坑人。CI 现在只管编译检查，
+      # 真正发给用户的包从本地用 release key 构建，传到
+      # https://qingkebiao.pages.dev 。
+      - name: 编译转绿，收掉排错日志
         if: steps.build.outcome == 'success' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest out/qingkebiao.apk \
-            --title "清课表 最新构建" \
-            --notes "提交 ${GITHUB_SHA::7} 自动构建。手机浏览器直接点下面的 qingkebiao.apk 下载安装。" \
-            --prerelease
-          # 编译转绿了，把排错用的日志 Release 收掉
           gh release delete build-log --yes --cleanup-tag 2>/dev/null || true

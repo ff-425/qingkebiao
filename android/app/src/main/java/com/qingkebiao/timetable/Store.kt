@@ -87,6 +87,39 @@ object Store {
         Unit
     }
 
+    /**
+     * 备份 / 恢复。
+     *
+     * 数据只在这台手机上，所以换手机、卸载重装、系统抽风，都可能一次性全没。
+     * 导出的就是内部那个 JSON 原文，没有额外格式 —— 恢复的时候原样写回去，
+     * 中间不做任何转换，也就不可能转丢。
+     */
+    suspend fun exportTo(ctx: Context, uri: Uri): Int = withContext(Dispatchers.IO) {
+        val tt = load(ctx)
+        val text = json.encodeToString(tt)
+        ctx.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+            ?: throw IOException("写不了这个位置，换个文件夹试试。")
+        tt.sessions.size
+    }
+
+    suspend fun restoreFrom(ctx: Context, uri: Uri): Timetable = withContext(Dispatchers.IO) {
+        val text = ctx.contentResolver.openInputStream(uri)?.use { it.reader().readText() }
+            ?: throw IOException("读不出这个文件。")
+        // 先解析，解析得动才覆盖 —— 不能拿一个坏文件把好数据盖掉
+        val tt = runCatching { json.decodeFromString<Timetable>(text) }.getOrElse {
+            throw IOException("这不像清课表的备份文件（${it.message ?: "格式不对"}）。")
+        }
+        if (tt.sessions.isEmpty() && tt.zfBlocks.isEmpty()) {
+            throw IOException("这个备份里没有课程，没必要恢复。")
+        }
+        save(ctx, tt)
+        tt
+    }
+
+    /** 建议的备份文件名，带日期，免得一堆同名文件分不清。 */
+    fun backupName(): String =
+        "qingkebiao-backup-" + java.time.LocalDate.now() + ".json"
+
     /** 读用户从系统文件选择器挑的 .ics。 */
     suspend fun readUri(ctx: Context, uri: Uri): String = withContext(Dispatchers.IO) {
         ctx.contentResolver.openInputStream(uri)?.use { it.reader().readText() }

@@ -1,7 +1,7 @@
 {
-  "versionCode": 21,
-  "versionName": "21",
-  "url": "https://github.com/ff-425/qingkebiao/releases/download/latest/qingkebiao.apk",
+  "versionCode": 22,
+  "versionName": "22",
+  "url": "https://qingkebiao.pages.dev/qingkebiao.apk",
   "size": 18431725,
-  "notes": "新增：图片 / PDF 课表识别，离线识别不联网"
+  "notes": "换了发布签名（安全修复）。**这一版必须先卸载再装**：先到 设置→数据 导出备份，卸载后装新版再恢复。同时新增备份 / 恢复功能。"
 }
