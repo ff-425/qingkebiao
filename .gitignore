@@ -25,3 +25,10 @@ cloudflare-upload/
 # 这两样必须单独备份。
 android/keystore.properties
 android/qingkebiao-release.jks
+
+# 兜底：任何 keystore / 密码文件都不许进仓库，不管放在哪个目录
+*.jks
+*.keystore
+!android/debug.keystore
+**/keystore.properties
+*签名备份*
