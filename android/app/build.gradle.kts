@@ -60,7 +60,12 @@ android {
         }
     }
 
-    val hasReleaseKey = rootProject.file("keystore.properties").exists()
+    // -PqkbSign=debug 强制用旧的 debug 签名。
+    // 用途只有一个：换签名那次，老用户手机上是旧签名的包，装不了新签名的版本，
+    // 而旧版本又没有"导出备份"这个功能 —— 等于让人在没有备份的情况下卸载。
+    // 所以要发一个"带备份功能 + 旧签名"的过渡包，让人能先把数据导出来。
+    val forceDebugSign = (project.findProperty("qkbSign") as String?) == "debug"
+    val hasReleaseKey = rootProject.file("keystore.properties").exists() && !forceDebugSign
 
     buildTypes {
         debug {
