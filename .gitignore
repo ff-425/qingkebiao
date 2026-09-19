@@ -32,3 +32,5 @@ android/qingkebiao-release.jks
 !android/debug.keystore
 **/keystore.properties
 *签名备份*
+android/build-release-*.apk
+android/lineage.bin
