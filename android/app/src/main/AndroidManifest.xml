@@ -23,6 +23,7 @@
         android:maxSdkVersion="32" />
 
     <application
+        android:name=".QkbApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"

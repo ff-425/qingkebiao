@@ -20,8 +20,8 @@ android {
         // 每次发版都要涨。涨了系统才会拦住"装回旧版"——
         // 旧版读不懂新数据文件是唯一能把用户手动加的课和调休记录搞没的路径。
         // versionName 就用大版本号，和发给用户的 qingkebiao-vN.apk 对得上。
-        versionCode = 24
-        versionName = "24"
+        versionCode = 25
+        versionName = "25"
 
         // OCR 带进来的原生库每个 ABI 都是十几兆，而一台手机只用得上一份。
         // 默认只打 arm64-v8a（2017 年以后的安卓机几乎全是），
@@ -127,4 +127,8 @@ dependencies {
     // 依赖 Google Play 服务的那个版本 —— 国内很多手机根本没装 GMS，
     // 那个版本在用户手上就是直接不能用。代价是 APK 大一圈。
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+
+    // 纯逻辑的单测（解析器、周次计算、差异比对）。
+    // 跑在 JVM 上，不需要设备，./gradlew test 几秒出结果。
+    testImplementation("junit:junit:4.13.2")
 }

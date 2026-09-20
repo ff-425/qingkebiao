@@ -56,7 +56,9 @@ jobs:
         working-directory: android
         run: |
           set -o pipefail
-          gradle assembleDebug --no-daemon --stacktrace 2>&1 \
+          # 先跑单测再编译：解析器和周次计算是纯逻辑，挂了就没必要往下走了。
+          # 测试失败同样会走下面"发布编译日志"那条路，日志里能看到是哪条挂的。
+          gradle testDebugUnitTest assembleDebug --no-daemon --stacktrace 2>&1 \
             | tee "$GITHUB_WORKSPACE/build.log"
 
       # 公开仓库的 Actions 日志，用 API 下载仍要仓库 admin 令牌。

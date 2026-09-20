@@ -1017,6 +1017,21 @@ private fun SettingsDialog(
         }
     }
 
+    val crashExport = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                ctx.contentResolver.openOutputStream(uri)?.use {
+                    it.write(Crash.readAll(ctx).toByteArray())
+                }
+            }.fold(
+                onSuccess = { msg = "已导出崩溃日志，发我就行。" },
+                onFailure = { msg = "导出失败：${it.message}" }
+            )
+        }
+    }
+
     var corrupt by remember { mutableStateOf(Store.corruptFiles(ctx)) }
     var pendingExport by remember { mutableStateOf<File?>(null) }
     // 隔离起来的文件在应用私有目录里，手机上翻不到。能导出来才叫"留着"。
@@ -1313,6 +1328,27 @@ private fun SettingsDialog(
                 }
             ) {
                 OutlineChip(pal, if (hasUpdate) "去更新" else "检查更新", onClick = onOpenUpdate)
+            }
+
+            // 崩溃记录只在真崩过之后才出现，平时这一段完全不占地方
+            val crashes = remember(permTick) { Crash.list(ctx) }
+            if (crashes.isNotEmpty()) {
+                Spacer(Modifier.height(22.dp))
+                Label(pal, "崩溃记录（${crashes.size} 条）")
+                MsgBox(
+                    pal,
+                    "App 崩过。" + (Crash.latestSummary(ctx) ?: "") +
+                        "\n导出发我，我照着修。里面只有异常堆栈和机型系统版本，没有你的课表内容。",
+                    error = true
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PrimaryButton(pal, "导出崩溃日志") {
+                        crashExport.launch("qingkebiao-crash-" + LocalDate.now() + ".txt")
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    OutlineChip(pal, "清掉") { Crash.clear(ctx); permTick++ }
+                }
             }
 
             Spacer(Modifier.height(22.dp))

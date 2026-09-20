@@ -1,7 +1,7 @@
 {
-  "versionCode": 24,
-  "versionName": "24",
+  "versionCode": 25,
+  "versionName": "25",
   "url": "https://qingkebiao.pages.dev/qingkebiao.apk",
   "size": 18564924,
-  "notes": "不用卸载了，直接装就行（用了签名轮换，数据不会丢）。新增：备份 / 恢复、退出教务系统登录。"
+  "notes": "崩溃现在会记在本地（设置里能导出发我，不上传）；修了一个真 bug：标了放假的那天，“下一节”和小组件还会显示那节不上的课。"
 }

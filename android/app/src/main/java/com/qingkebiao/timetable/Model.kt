@@ -208,16 +208,32 @@ class Derived(val tt: Timetable, val zone: ZoneId = ZoneId.systemDefault()) {
      */
     private fun effectiveWindow(now: Long): List<Session> {
         val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
-        return (-1L..21L).flatMap { sessionsOn(today.plusDays(it)) }.sortedBy { it.start }
+        return (-1L..WINDOW_DAYS).flatMap { sessionsOn(today.plusDays(it)) }.sortedBy { it.start }
+    }
+
+    private companion object {
+        /** "进行中/下一节/接下来几节"都在今天往后这么多天的窗口里算，调休只在窗口内生效。 */
+        const val WINDOW_DAYS = 21L
     }
 
     fun current(now: Long = System.currentTimeMillis()): Session? =
         effectiveWindow(now).firstOrNull { now in it.start until it.end }
 
-    fun next(now: Long = System.currentTimeMillis()): Session? =
-        effectiveWindow(now).firstOrNull { it.start > now }
-        // 窗口外（比如假期后才开学）兜底扫一遍原始数据
-            ?: tt.sessions.filter { it.start > now }.minByOrNull { it.start }
+    fun next(now: Long = System.currentTimeMillis()): Session? {
+        effectiveWindow(now).firstOrNull { it.start > now }?.let { return it }
+        // 窗口外（比如假期结束后才开学）兜底扫原始数据。
+        //
+        // 关键是只扫窗口**之外**：窗口内的已经被 sessionsOn 按调休处理过了，
+        // 再无差别扫一遍会把"今天放假"取消掉的课又捞回来 —— 单测抓到的就是这个，
+        // 标了放假当天，"下一节"和小组件照样显示那节不上的课。
+        val end = windowEnd(now)
+        return tt.sessions.filter { it.start >= end }.minByOrNull { it.start }
+    }
+
+    private fun windowEnd(now: Long): Long {
+        val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        return today.plusDays(WINDOW_DAYS + 1).atStartOfDay(zone).toInstant().toEpochMilli()
+    }
 
     /**
      * 接下来要上的几节课，已应用调休。排提醒闹钟用的。
