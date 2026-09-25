@@ -122,6 +122,131 @@ class GenericGridTest {
     }
 }
 
+/**
+ * 一行代表几节。
+ *
+ * 以前每一行一律当一节，按行号往下数 —— 学校发的总课表很多是一行一个大节
+ * （"第1-2节"），导进来一节 95 分钟的课只占 45 分钟；Excel 里一门课
+ * 跨两行合并的，也只算了第一行。
+ */
+class GenericRowSpanTest {
+
+    private fun cell(vararg lines: String) = lines.joinToString("\n")
+    private val head = listOf("节次", "星期一", "星期二", "星期三")
+    private fun span(b: Zf.Block) = b.startPeriod to b.endPeriod
+
+    @Test fun `行标题写第1-2节就是两节`() {
+        val b = Generic.parseRows(listOf(
+            head,
+            listOf("第1-2节", cell("线性代数", "1-16周", "教1-101"), "", ""),
+            listOf("第3-4节", "", cell("概率论", "1-16周", "教2-305"), "")
+        ))
+        assertEquals(1 to 2, span(b.first { it.title == "线性代数" }))
+        assertEquals(3 to 4, span(b.first { it.title == "概率论" }))
+    }
+
+    @Test fun `中文数字和顿号也认`() {
+        val b = Generic.parseRows(listOf(
+            head,
+            listOf("一二节", cell("线性代数", "1-16周"), "", ""),
+            listOf("第三、四节", "", cell("概率论", "1-16周"), ""),
+            listOf("第十一~十二节", "", "", cell("晚自习", "1-16周"))
+        ))
+        assertEquals(1 to 2, span(b.first { it.title == "线性代数" }))
+        assertEquals(3 to 4, span(b.first { it.title == "概率论" }))
+        assertEquals(11 to 12, span(b.first { it.title == "晚自习" }))
+    }
+
+    /** 行标题里常带着上课时间，"08:10-09:45" 不能被读成第 10-9 节 */
+    @Test fun `行标题里的时间不当节次`() {
+        val b = Generic.parseRows(listOf(
+            head,
+            listOf(cell("第1-2节", "08:10-09:45"), cell("线性代数", "1-16周"), "", ""),
+            listOf(cell("08:10-09:45"), "", cell("概率论", "1-16周"), "")
+        ))
+        assertEquals(1 to 2, span(b.first { it.title == "线性代数" }))
+        // 第二行只有时间没有节次，接着上一行往下数
+        assertEquals(3 to 3, span(b.first { it.title == "概率论" }))
+    }
+
+    /** Excel 的合并单元格展开后每行都是同一段文字，要拼成一节连着的课 */
+    @Test fun `上下合并的格子延伸到最后一行`() {
+        val gs = cell("高等数学", "1-16周", "教三-201")
+        val b = Generic.parseRows(listOf(
+            head,
+            listOf("1", gs, "", ""),
+            listOf("2", gs, "", ""),
+            listOf("3", "", cell("体育", "1-16周"), ""),
+            listOf("4", "", "", "")
+        ))
+        assertEquals(1, b.count { it.title == "高等数学" })
+        assertEquals(1 to 2, span(b.first { it.title == "高等数学" }))
+        assertEquals(3 to 3, span(b.first { it.title == "体育" }))
+    }
+
+    /** 以前按"星期 + 文字"全局去重，同一天上下午两节一模一样的课会丢一节 */
+    @Test fun `同一天不相邻的两节同样的课都保留`() {
+        val gs = cell("高等数学", "1-16周", "教三-201")
+        val b = Generic.parseRows(listOf(
+            head,
+            listOf("1", gs, "", ""),
+            listOf("2", "", "", ""),
+            listOf("3", gs, "", "")
+        ))
+        assertEquals(listOf(1 to 1, 3 to 3), b.filter { it.title == "高等数学" }.map(::span).sortedBy { it.first })
+    }
+
+    /** 图片识别往往只读出每个大节的起始数字：1、3、5、7 */
+    @Test fun `行号等距跳着走就按大节算`() {
+        val b = Generic.parseRows(listOf(
+            head,
+            listOf("1", cell("线性代数", "1-16周"), "", ""),
+            listOf("3", "", cell("概率论", "1-16周"), ""),
+            listOf("5", "", "", cell("体育", "1-16周")),
+            listOf("7", cell("英语", "1-16周"), "", "")
+        ), loose = true)
+        assertEquals(1 to 2, span(b.first { it.title == "线性代数" }))
+        assertEquals(3 to 4, span(b.first { it.title == "概率论" }))
+        assertEquals(5 to 6, span(b.first { it.title == "体育" }))
+        assertEquals(7 to 8, span(b.first { it.title == "英语" }))
+    }
+
+    /** 缺了一行（比如第 4 节整行没课被删了）不能因此把第 3 节拉成两节 */
+    @Test fun `行号不规则时不瞎推`() {
+        val b = Generic.parseRows(listOf(
+            head,
+            listOf("1", cell("线性代数", "1-16周"), "", ""),
+            listOf("2", "", "", ""),
+            listOf("3", "", cell("概率论", "1-16周"), ""),
+            listOf("5", "", "", cell("体育", "1-16周"))
+        ))
+        assertEquals(1 to 1, span(b.first { it.title == "线性代数" }))
+        assertEquals(3 to 3, span(b.first { it.title == "概率论" }))
+        assertEquals(5 to 5, span(b.first { it.title == "体育" }))
+    }
+
+    @Test fun `格子里自己写了节次以格子为准`() {
+        val b = Generic.parseRows(listOf(
+            head,
+            listOf("第1-2节", cell("实验课", "(5-6节)", "1-16周", "实验楼101"), "", "")
+        ))
+        assertEquals(5 to 6, span(b.first()))
+    }
+
+    /** 网页表格的 rowspan 和 Excel 合并单元格是一回事 */
+    @Test fun `网页表格的 rowspan 也延伸`() {
+        val html = """
+            <table>
+              <tr><td>节次</td><td>星期一</td><td>星期二</td><td>星期三</td></tr>
+              <tr><td>1</td><td rowspan="2">高等数学<br>1-16周<br>教三-201</td><td></td><td></td></tr>
+              <tr><td>2</td><td></td><td></td></tr>
+            </table>
+        """.trimIndent()
+        val b = Generic.parse(html)
+        assertEquals(1 to 2, span(b.first { it.title == "高等数学" }))
+    }
+}
+
 class SheetsTest {
 
     @Test fun `CSV 基本解析`() {

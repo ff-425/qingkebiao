@@ -33,7 +33,8 @@ object Ocr {
     class OcrException(message: String) : Exception(message)
 
     private val WEEKDAY_RE = Regex("""^\s*(?:星期|周)\s*([一二三四五六日天1-7])\s*$""")
-    private val NUM_RE = Regex("""^\s*(\d{1,2})\s*$""")
+    /** 节次列里的一格："3"，或者一行一个大节的 "第1-2节""1~2" —— 取起始数字定行位置 */
+    private val NUM_RE = Regex("""^\s*第?\s*(\d{1,2})\s*(?:[-–—~～至到、,，]\s*\d{1,2}\s*)?节?\s*$""")
 
     private fun weekdayOf(s: String): Int? {
         val m = WEEKDAY_RE.find(s.replace(" ", "")) ?: return null
@@ -176,7 +177,8 @@ object Ocr {
                 if (i == 0) ys[0] - (ys.getOrElse(1) { ys[0] + 100 } - ys[0]) / 2
                 else (ys[i - 1] + ys[i]) / 2
             }
-            rowLabels = anchors.map { it.first.toString() }
+            // 原文照搬："第1-2节" 只留 "1" 的话，后面就不知道这一行是两节了
+            rowLabels = anchors.map { it.second.text }
         } else {
             // 没有节次列：按纵向间距切行
             val sorted = body.sortedBy { it.box.top }

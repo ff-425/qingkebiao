@@ -100,7 +100,51 @@ object Generic {
 
     private val PERIOD_IN_TEXT = Regex("""(\d+)\s*[-–~]\s*(\d+)\s*节""")
     private val SINGLE_PERIOD = Regex("""第?\s*(\d+)\s*节""")
-    private val LEADING_NUM = Regex("""^\s*(\d{1,2})\s*$""")
+    /**
+     * 行标题里的节次范围："第1-2节""1~2""第3、4节"。
+     * 行标题里常带着上课时间，数字紧挨冒号的一律不算 ——
+     * 否则 "08:10-09:45" 会被读成第 10-9 节。
+     */
+    private val LABEL_RANGE = Regex("""(?<![\d:：])(\d{1,2})\s*[-–—~～至到、,，]\s*(\d{1,2})(?![\d:：])""")
+    private val LABEL_SINGLE = Regex("""(?<![\d:：])(\d{1,2})(?![\d:：])""")
+
+    private const val CN_DIGITS = "零一二三四五六七八九"
+    private val CN_NUM = Regex("""[一二三四五六七八九十]+""")
+
+    /** "第三、四节" → "第3、4节"，"十一" → "11"；"一二节" 这种连写当成 1-2 */
+    private fun cnToDigits(s: String): String = CN_NUM.replace(s) { m ->
+        val t = m.value
+        fun d(c: Char) = CN_DIGITS.indexOf(c)
+        when {
+            t == "十" -> "10"
+            t.length == 2 && t[0] == '十' -> (10 + d(t[1])).toString()
+            t.length == 2 && t[1] == '十' -> (d(t[0]) * 10).toString()
+            t.length == 3 && t[1] == '十' -> (d(t[0]) * 10 + d(t[2])).toString()
+            '十' !in t -> t.map { d(it) }.joinToString("-")
+            else -> t
+        }
+    }
+
+    /**
+     * 这一行的行标题写的是第几节到第几节，没写返回 null。
+     * 只看星期列左边的格子（最多三列：常见的是"上午 | 第1-2节 | 08:10"）。
+     * 先在所有标题格里找范围，找不到再找单个数字 —— "上午 | 1" 这种单个的也要认。
+     */
+    private fun rowLabel(row: List<Cell?>, firstDayCol: Int): IntRange? {
+        val texts = (0 until minOf(row.size, firstDayCol, 3))
+            .mapNotNull { i -> row[i]?.lines?.joinToString("\n")?.let(::cnToDigits) }
+        for (t in texts) {
+            val m = LABEL_RANGE.find(t) ?: continue
+            val a = m.groupValues[1].toInt()
+            val b = m.groupValues[2].toInt()
+            if (a in 1..20 && b in a..20 && b - a <= 5) return a..b
+        }
+        for (t in texts) {
+            val n = LABEL_SINGLE.find(t)?.groupValues?.get(1)?.toInt() ?: continue
+            if (n in 1..20) return n..n
+        }
+        return null
+    }
     private val WEEK_TEXT = Regex("""[\d,，\-－~至到单双周()（）]{2,}周""")
     private val PLACE_HINT = Regex("""[楼馆室厅场院区舍]|机房|实验|中心|校区""")
     /**
@@ -176,43 +220,72 @@ object Generic {
 
         val out = ArrayList<Zf.Block>()
         val seen = HashSet<String>()
-        var rowPeriod = 0
+        /** 靠行推节次的格子：key → (上次出现在第几行, 在 out 里的下标)，合并单元格往下延伸时用 */
+        val open = HashMap<String, Pair<Int, Int>>()
 
-        for (r in (headerRow + 1) until grid.size) {
+        // 每一行代表第几节到第几节。
+        // 以前一律"一行一节"按行号往下数，一行一个大节（第1-2节）的总课表
+        // 导进来，一节 95 分钟的课只占了 45 分钟。
+        val bodyRows = ((headerRow + 1) until grid.size).toList()
+        val firstDayCol = cols.keys.min()
+        val labels = bodyRows.map { rowLabel(grid[it], firstDayCol) }
+        // 图片识别往往只读出每个大节的起始数字：1、3、5、7。
+        // 只有每一行都标了单个数字、而且全都等距跳 2~4 的时候才这么推 ——
+        // 1、2、3、5（第 4 节那行没课被删了）这种不规则的不能瞎推成大节。
+        val step = if (labels.size >= 3 && labels.all { it != null && it.first == it.last }) {
+            labels.map { it!!.first }.zipWithNext { a, b -> b - a }.toSet()
+                .singleOrNull()?.takeIf { it in 2..4 }
+        } else null
+
+        var nextPeriod = 1
+        for ((k, r) in bodyRows.withIndex()) {
             val row = grid[r]
-            // 前面几列里的纯数字当作节次
-            val lead = (0 until minOf(row.size, 3))
-                .mapNotNull { i -> row[i]?.text?.let { LEADING_NUM.find(it)?.groupValues?.get(1)?.toIntOrNull() } }
-                .firstOrNull()
-            if (lead != null) rowPeriod = lead else rowPeriod++
+            val lab = labels[k]
+            val rowRange = when {
+                lab == null -> nextPeriod..nextPeriod
+                step != null -> lab.first..(lab.first + step - 1)
+                else -> lab
+            }
+            nextPeriod = rowRange.last + 1
 
             for ((ci, weekday) in cols) {
                 val cell = row.getOrNull(ci) ?: continue
                 val lines = cell.lines
-                if (lines.isEmpty()) continue
-
-                // 同一个 cell 因为合并会在多行重复出现，去重
-                val key = "$weekday|${cell.text}"
-                if (cell.text.isBlank() || !seen.add(key)) continue
+                if (lines.isEmpty() || cell.text.isBlank()) continue
 
                 val joined = lines.joinToString(" ")
+
+                // 格子里自己写了节次就以格子为准，否则用这一行代表的节次
+                val pm = PERIOD_IN_TEXT.find(joined)
+                val sp = if (pm == null) SINGLE_PERIOD.find(joined)?.groupValues?.get(1)?.toIntOrNull() else null
+                val explicit = pm != null || sp != null
+                val p1 = pm?.groupValues?.get(1)?.toInt() ?: sp ?: rowRange.first
+                val p2 = pm?.groupValues?.get(2)?.toInt() ?: sp ?: rowRange.last
+                if (p1 < 1 || p1 > 30) continue
+
+                // 合并单元格（网页 rowspan、Excel 上下合并）展开后，同一段文字会在连续几行重复出现。
+                // 格子写了节次的：重复几次都是同一节课，去重就行。
+                // 靠行推节次的：紧挨着上一行出现就是同一节课往下延伸，把结束节拉长；
+                // 不挨着的是另一节课 —— 以前按"星期 + 文字"全局去重，同一天上下午
+                // 两节一模一样的课会丢一节。
+                val key = "$weekday|${cell.text}"
+                if (explicit) {
+                    if (!seen.add("$key|$p1-$p2")) continue
+                } else {
+                    val prev = open[key]
+                    if (prev != null && prev.first == k - 1) {
+                        val i = prev.second
+                        out[i] = out[i].copy(endPeriod = maxOf(out[i].endPeriod, p2))
+                        open[key] = k to i
+                        continue
+                    }
+                }
+
                 var weeksRaw = WEEK_TEXT.find(joined)?.value ?: ""
                 if (weeksRaw.isBlank() && loose) {
                     weeksRaw = lines.firstNotNullOfOrNull { looseWeeks(it) }.orEmpty()
                 }
                 val weeks = Zf.parseWeeks(weeksRaw).ifEmpty { (1..defaultWeeks).toList() }
-
-                val pm = PERIOD_IN_TEXT.find(joined)
-                val p1: Int
-                val p2: Int
-                if (pm != null) {
-                    p1 = pm.groupValues[1].toInt(); p2 = pm.groupValues[2].toInt()
-                } else {
-                    val sp = SINGLE_PERIOD.find(joined)?.groupValues?.get(1)?.toIntOrNull()
-                    p1 = sp ?: rowPeriod
-                    p2 = p1
-                }
-                if (p1 < 1 || p1 > 30) continue
 
                 // 课程名取第一行（跳过纯周次/节次那种行）。
                 // 曾经是"剩下的行里最长的那个"，结果 "高等数学/1-16周/教三-201/王伟"
@@ -247,6 +320,7 @@ object Generic {
                         teacher = teacher, credits = "", classCode = ""
                     )
                 )
+                if (!explicit) open[key] = k to out.lastIndex
             }
         }
         if (out.isEmpty()) throw ParseException("表格找到了，但没认出任何课程。")
