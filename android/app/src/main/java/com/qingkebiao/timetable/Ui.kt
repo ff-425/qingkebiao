@@ -2,7 +2,8 @@ package com.qingkebiao.timetable
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
-import androidx.compose.animation.fadeIn
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -133,7 +134,8 @@ fun Sheet(
             )
             AnimatedVisibility(
                 visibleState = shown,
-                enter = slideInVertically { it / 4 } + fadeIn()
+                // 只平移，不淡入：淡入要整块离屏混合，面板内容多的时候会掉帧
+                enter = slideInVertically(tween(PAGE_MS, easing = FastOutSlowInEasing)) { it }
             ) {
                 Surface(
                     color = pal.panel,

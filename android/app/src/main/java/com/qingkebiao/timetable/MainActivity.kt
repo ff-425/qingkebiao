@@ -10,9 +10,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
@@ -22,16 +23,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -82,16 +80,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -127,6 +128,9 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class ViewMode { Day, Week }
+
+/** 翻页、推入设置页的动画时长。短一点，手感跟手，也少画几帧。 */
+internal const val PAGE_MS = 220
 
 /** 内容区现在显示的是哪一"页"。翻页动画靠比较前后两页决定往哪边滑。 */
 private data class Page(val view: ViewMode, val day: LocalDate?, val week: Int) {
@@ -455,15 +459,19 @@ private fun Home(pal: Palette, resumeTick: Int) {
                 } else {
                     AnimatedContent(
                         targetState = Page(view, if (dayMode) dayDate else null, if (dayMode) 0 else weekIdx),
+                        // 只平移、不做淡入淡出：淡入淡出要把整页先画到离屏缓冲再混合，
+                        // 周视图那么多色块，每帧都这么来一遍，中低端机上就是掉帧的主要来源。
+                        // 今日 / 本周切换直接换，不做动画 —— 两种视图长得完全不一样，滑过去反而晃眼。
                         transitionSpec = {
                             if (initialState.view != targetState.view) {
-                                fadeIn(tween(200)) togetherWith fadeOut(tween(120))
+                                EnterTransition.None togetherWith ExitTransition.None
                             } else {
                                 val fwd = targetState.order > initialState.order
-                                (slideInHorizontally(tween(240)) { w -> if (fwd) w / 5 else -w / 5 } +
-                                    fadeIn(tween(240))) togetherWith
-                                    (slideOutHorizontally(tween(200)) { w -> if (fwd) -w / 5 else w / 5 } +
-                                        fadeOut(tween(160)))
+                                slideInHorizontally(tween(PAGE_MS, easing = FastOutSlowInEasing)) { w ->
+                                    if (fwd) w else -w
+                                } togetherWith slideOutHorizontally(tween(PAGE_MS, easing = FastOutSlowInEasing)) { w ->
+                                    if (fwd) -w else w
+                                }
                             }
                         },
                         label = "page"
@@ -485,8 +493,8 @@ private fun Home(pal: Palette, resumeTick: Int) {
         // 设置是一整页，从右边推进来；系统返回键先退子页面，再关掉设置
         AnimatedVisibility(
             visible = showSettings,
-            enter = slideInHorizontally(tween(260)) { it / 3 } + fadeIn(tween(200)),
-            exit = slideOutHorizontally(tween(200)) { it / 3 } + fadeOut(tween(160))
+            enter = slideInHorizontally(tween(PAGE_MS, easing = FastOutSlowInEasing)) { it },
+            exit = slideOutHorizontally(tween(PAGE_MS, easing = FastOutSlowInEasing)) { it }
         ) {
             SettingsPage(
                 pal = pal, d = d, hues = hues, hourDp = hourDp,
@@ -838,8 +846,24 @@ private fun DayColumn(
         else -> Color.Transparent
     }
 
-    BoxWithConstraints(
-        modifier.height(total).background(bg).drawBehind {
+    val density = LocalDensity.current
+    // 每个课程块的上沿和高度，只在课表或缩放变了才重算
+    val geo = remember(placed, lo, hi, minuteDp) {
+        placed.map { p ->
+            val st = maxOf(lo, p.session.startMinute())
+            val en = minOf(hi, p.session.endMinute())
+            val top = minuteDp * (st - lo) + 1.dp
+            val h = (minuteDp * (en - st) - 2.dp).coerceAtLeast(20.dp)
+            top to h
+        }
+    }
+    val nowMin = if (isToday) now.toLocalDateTime().let { it.hour * 60 + it.minute } else -1
+    val showNow = isToday && nowMin in lo..hi
+
+    // 自己排版，不用 BoxWithConstraints：那个是"先量宽度再组合内容"的子组合，
+    // 一屏七列、翻页时新旧两页同时在，就是十几次子组合，开销比直接排大得多。
+    Layout(
+        modifier = modifier.height(total).background(bg).drawBehind {
             val perMin = minuteDp.toPx()
             // 网格线画在上下课时刻上，和课程块的边缘正好重合
             marks.forEach { mk ->
@@ -850,63 +874,85 @@ private fun DayColumn(
                 )
             }
             drawLine(pal.ruleSoft, Offset(0f, 0f), Offset(0f, size.height), 1f)
+        },
+        content = {
+            placed.forEachIndexed { i, p ->
+                val s = p.session
+                // 暗色底上 0.45 会把已过的课压到几乎看不见，单独抬一档
+                val alpha = if (s.end < now) pastAlpha(pal) else 1f
+                WeekBlock(pal, s, hues[s.title] ?: 0f, alpha, geo[i].second, onPick)
+            }
+            if (showNow) {
+                Box(Modifier.fillMaxWidth().height(2.dp).background(pal.signal))
+                Box(Modifier.size(8.dp).background(pal.signal, CircleShape))
+            }
         }
-    ) {
-        val colWidth = maxWidth
-
-        placed.forEach { p ->
-            val s = p.session
-            val st = maxOf(lo, s.startMinute())
-            val en = minOf(hi, s.endMinute())
-            val h = (minuteDp * (en - st) - 2.dp).coerceAtLeast(20.dp)
-            val hue = hues[s.title] ?: 0f
-            // 暗色底上 0.45 会把已过的课压到几乎看不见，单独抬一档
-            val alpha = if (s.end < now) pastAlpha(pal) else 1f
-            val ink = blockText(hue, pal.dark).copy(alpha = alpha)
-            val edge = blockEdge(hue, pal.dark).copy(alpha = alpha)
-
-            Box(
-                Modifier
-                    .offset(x = colWidth * (p.col.toFloat() / p.cols), y = minuteDp * (st - lo) + 1.dp)
-                    .width(colWidth / p.cols)
-                    .height(h)
-                    .padding(horizontal = 1.5.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(blockFill(hue, pal.dark).copy(alpha = alpha))
-                    .drawBehind { drawRect(edge, size = Size(3.dp.toPx(), size.height)) }
-                    .clickable { onPick(s) }
-                    .padding(start = 6.dp, end = 3.dp, top = 4.dp, bottom = 3.dp)
-            ) {
-                Column {
-                    Text(
-                        s.title, color = ink,
-                        fontSize = Fs.caption, fontWeight = FontWeight.SemiBold, lineHeight = 15.sp,
-                        maxLines = if (h >= 64.dp) 3 else 2, overflow = TextOverflow.Ellipsis
-                    )
-                    // 表格里时间已经由左边的刻度给了，块里写地点更有用
-                    if (h >= 50.dp) {
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            s.location.ifBlank { s.start.hhmm() },
-                            color = ink.copy(alpha = alpha * 0.8f),
-                            fontSize = Fs.micro, lineHeight = 13.sp,
-                            maxLines = if (h >= 90.dp) 2 else 1, overflow = TextOverflow.Ellipsis
-                        )
-                    }
+    ) { measurables, constraints ->
+        val w = constraints.maxWidth
+        val placeables = measurables.mapIndexed { i, m ->
+            if (i < placed.size) {
+                val p = placed[i]
+                val bw = w / p.cols
+                val bh = with(density) { geo[i].second.roundToPx() }
+                m.measure(Constraints.fixed(bw, bh))
+            } else {
+                m.measure(Constraints(maxWidth = w))
+            }
+        }
+        layout(w, constraints.maxHeight) {
+            placeables.forEachIndexed { i, pl ->
+                if (i < placed.size) {
+                    val p = placed[i]
+                    pl.place(w * p.col / p.cols, with(density) { geo[i].first.roundToPx() })
+                } else {
+                    // 当前时刻：一条红线 + 左端一个圆点
+                    val y = with(density) { (minuteDp * (nowMin - lo)).roundToPx() }
+                    pl.place(0, y - pl.height / 2)
                 }
             }
         }
+    }
+}
 
-        if (isToday) {
-            val nowMin = now.toLocalDateTime().let { it.hour * 60 + it.minute }
-            if (nowMin in lo..hi) {
-                Box(
-                    Modifier.offset(y = minuteDp * (nowMin - lo) - 1.dp)
-                        .fillMaxWidth().height(2.dp).background(pal.signal)
+/** 周视图里的一个课程块。 */
+@Composable
+private fun WeekBlock(
+    pal: Palette, s: Session, hue: Float, alpha: Float, h: Dp, onPick: (Session) -> Unit
+) {
+    val ink = blockText(hue, pal.dark).copy(alpha = alpha)
+    val edge = blockEdge(hue, pal.dark).copy(alpha = alpha)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 1.5.dp)
+            // 用带圆角的背景，不用 clip：clip 会给每个块单独开一个图层
+            .background(blockFill(hue, pal.dark).copy(alpha = alpha), RoundedCornerShape(6.dp))
+            .drawBehind {
+                val bar = 3.dp.toPx()
+                val inset = 3.dp.toPx()
+                drawRoundRect(
+                    edge, topLeft = Offset(0f, inset),
+                    size = Size(bar, (size.height - inset * 2).coerceAtLeast(0f)),
+                    cornerRadius = CornerRadius(bar / 2)
                 )
-                Box(
-                    Modifier.offset(y = minuteDp * (nowMin - lo) - 4.dp)
-                        .size(8.dp).background(pal.signal, CircleShape)
+            }
+            .clickable { onPick(s) }
+            .padding(start = 6.dp, end = 3.dp, top = 4.dp, bottom = 3.dp)
+    ) {
+        Column {
+            Text(
+                s.title, color = ink,
+                fontSize = Fs.caption, fontWeight = FontWeight.SemiBold, lineHeight = 15.sp,
+                maxLines = if (h >= 64.dp) 3 else 2, overflow = TextOverflow.Ellipsis
+            )
+            // 表格里时间已经由左边的刻度给了，块里写地点更有用
+            if (h >= 50.dp) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    s.location.ifBlank { s.start.hhmm() },
+                    color = ink.copy(alpha = alpha * 0.8f),
+                    fontSize = Fs.micro, lineHeight = 13.sp,
+                    maxLines = if (h >= 90.dp) 2 else 1, overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -943,6 +989,8 @@ private fun DayList(
     val ov = d.overrideFor(day)
     val isToday = day == LocalDate.now()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    // "下一节"要把往后三周的课都过一遍，别每次重组都算
+    val next = remember(d, now, isToday) { if (isToday) d.next(now) else null }
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -988,7 +1036,7 @@ private fun DayList(
         if (isToday && items.none { it.end > now }) {
             item {
                 Column {
-                    RestOfDayCard(pal, hues, hadClasses = items.isNotEmpty(), next = d.next(now), now = now)
+                    RestOfDayCard(pal, hues, hadClasses = items.isNotEmpty(), next = next, now = now)
                     Spacer(Modifier.height(Dim.l))
                 }
             }
@@ -1033,7 +1081,10 @@ private fun CourseCard(pal: Palette, s: Session, hue: Float, now: Long, onClick:
     val alpha = if (past) pastAlpha(pal) else 1f
     val shape = RoundedCornerShape(Dim.rCard)
 
-    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+    // 左边那条课程色不再用"撑满父级高度"的子元素画 —— 那要先按固有尺寸量一遍，
+    // 列表每滚出一张卡就多一轮测量。直接画在卡片背景上。
+    val edge = blockEdge(hue, pal.dark).copy(alpha = alpha)
+    Row(Modifier.fillMaxWidth()) {
         Column(Modifier.width(TIME_COL).padding(top = 13.dp)) {
             Text(
                 s.start.hhmm(), color = pal.ink.copy(alpha = alpha),
@@ -1047,17 +1098,13 @@ private fun CourseCard(pal: Palette, s: Session, hue: Float, now: Long, onClick:
         Row(
             Modifier
                 .weight(1f)
-                .fillMaxHeight()
                 .clip(shape)
                 .background(pal.panel)
+                .drawBehind { drawRect(edge, size = Size(5.dp.toPx(), size.height)) }
                 .then(if (live) Modifier.border(1.5.dp, pal.signal, shape) else Modifier)
                 .clickable(onClick = onClick)
         ) {
-            Box(
-                Modifier.width(5.dp).fillMaxHeight()
-                    .background(blockEdge(hue, pal.dark).copy(alpha = alpha))
-            )
-            Column(Modifier.weight(1f).padding(start = 12.dp, end = 14.dp, top = 12.dp, bottom = 12.dp)) {
+            Column(Modifier.weight(1f).padding(start = 17.dp, end = 14.dp, top = 12.dp, bottom = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         s.title, color = pal.ink.copy(alpha = alpha),
@@ -1131,9 +1178,9 @@ private fun RestOfDayCard(
             } else {
                 Text("下一节", color = pal.muted, fontSize = Fs.caption)
                 Spacer(Modifier.height(6.dp))
-                Row(Modifier.height(IntrinsicSize.Min), verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        Modifier.width(4.dp).fillMaxHeight()
+                        Modifier.width(4.dp).height(38.dp)
                             .background(blockEdge(hues[next.title] ?: 0f, pal.dark), RoundedCornerShape(2.dp))
                     )
                     Spacer(Modifier.width(10.dp))
@@ -1376,19 +1423,19 @@ private fun ArrangementCard(
     pal: Palette, d: Derived, a: Arrangement, hue: Float, current: Boolean
 ) {
     val periodText = periodLabel(d.tt.periods, a.startMin, a.endMin)
+    val edge = blockEdge(hue, pal.dark)
     Row(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(pal.panel2)
+            .drawBehind { drawRect(edge, size = Size(4.dp.toPx(), size.height)) }
             .then(
-                if (current) Modifier.border(1.dp, blockEdge(hue, pal.dark), RoundedCornerShape(12.dp))
+                if (current) Modifier.border(1.dp, edge, RoundedCornerShape(12.dp))
                 else Modifier
             )
-            .height(IntrinsicSize.Min)
     ) {
-        Box(Modifier.width(4.dp).fillMaxHeight().background(blockEdge(hue, pal.dark)))
-        Column(Modifier.weight(1f).padding(horizontal = 14.dp, vertical = Dim.m)) {
+        Column(Modifier.weight(1f).padding(start = 18.dp, end = 14.dp, top = Dim.m, bottom = Dim.m)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "${DAY_ABBR[a.weekday % 7]} ${a.startMin.hhmm()}–${a.endMin.hhmm()}",
