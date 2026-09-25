@@ -2,6 +2,6 @@
   "versionCode": 29,
   "versionName": "29",
   "url": "https://qingkebiao.pages.dev/qingkebiao.apk",
-  "size": 18761532,
+  "size": 16169112,
   "notes": "更流畅：翻页、滑动、打开设置不再卡顿（发布包改成正式的优化编译，课表查询也不再重复计算）。"
 }
