@@ -84,7 +84,7 @@ internal enum class SPage(val title: String) {
 }
 
 @Composable
-fun SettingsPage(
+internal fun SettingsPage(
     pal: Palette, d: Derived, hues: Map<String, Float>, hourDp: Dp,
     onHourDp: (Dp) -> Unit, onClose: () -> Unit,
     onApply: (Timetable) -> Unit, onEditOverride: (LocalDate) -> Unit,
