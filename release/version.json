@@ -1,7 +1,7 @@
 {
-  "versionCode": 28,
-  "versionName": "28",
+  "versionCode": 29,
+  "versionName": "29",
   "url": "https://qingkebiao.pages.dev/qingkebiao.apk",
   "size": 18761532,
-  "notes": "导入 Excel、CSV、图片课表时认得「第1-2节」这种一行一个大节的写法，上下合并的格子也会连成一节完整的课，不再只占 45 分钟。"
+  "notes": "更流畅：翻页、滑动、打开设置不再卡顿（发布包改成正式的优化编译，课表查询也不再重复计算）。"
 }
