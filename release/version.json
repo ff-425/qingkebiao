@@ -1,7 +1,7 @@
 {
-  "versionCode": 26,
-  "versionName": "26",
+  "versionCode": 27,
+  "versionName": "27",
   "url": "https://qingkebiao.pages.dev/qingkebiao.apk",
   "size": 18728764,
-  "notes": "界面全面改版：新顶栏、今日课程改成卡片、周视图重画，左右滑动翻页；设置改成独立页面，导入入口移到设置里。"
+  "notes": "支持多学期：导入下学期时这学期自动存进历史，设置 → 学期 里随时切换、改名；备份会带上所有学期。"
 }
