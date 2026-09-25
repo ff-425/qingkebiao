@@ -140,6 +140,8 @@ fun FileImportDialog(
     pal: Palette,
     tt: Timetable,
     uri: Uri,
+    /** 作为新学期导入：当前课表存进历史 */
+    newTerm: Boolean = false,
     onClose: () -> Unit,
     onImported: (Timetable) -> Unit
 ) {
@@ -150,7 +152,8 @@ fun FileImportDialog(
     var msg by remember { mutableStateOf<String?>("解析中…") }
     var err by remember { mutableStateOf(false) }
     var done by remember { mutableStateOf(false) }
-    var askWeek by remember { mutableStateOf(tt.termStartEpochDay == null) }
+    // 新学期的开学日期还不知道，一定要问"今天第几周"
+    var askWeek by remember { mutableStateOf(newTerm || tt.termStartEpochDay == null) }
     var currentWeek by remember { mutableIntStateOf(1) }
 
     val periods = tt.periods.ifEmpty { DEFAULT_PERIODS }
@@ -171,13 +174,16 @@ fun FileImportDialog(
                 Store.importZf(
                     ctx, r.blocks,
                     currentWeek = if (askWeek) currentWeek else null,
-                    parser = r.kind
+                    parser = r.kind,
+                    newTerm = newTerm
                 )
             }.fold(
                 onSuccess = {
                     done = true; err = false
                     onImported(it)
-                    msg = "已导入 ${it.sessions.size} 节课。时间不对就到设置里改「作息时间」。"
+                    msg = "已导入 ${it.sessions.size} 节课。" +
+                        (if (newTerm) "上个学期已经存进历史，设置 → 学期 里能切回去。" else "") +
+                        "时间不对就到设置里改「作息时间」。"
                 },
                 onFailure = { e -> err = true; msg = "导入失败：${e.message}" }
             )

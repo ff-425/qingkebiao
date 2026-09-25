@@ -169,7 +169,11 @@ private fun Home(pal: Palette, resumeTick: Int) {
     var dayDate by remember { mutableStateOf(LocalDate.now()) }
     var hourDp by remember { mutableStateOf(64.dp) }
     var showImport by remember { mutableStateOf(false) }
+    /** 打开导入框时默认选"作为新学期"（从设置 → 学期里点进来的） */
+    var importAsNew by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var settingsPage by remember { mutableStateOf(SPage.Root) }
+    var endedDismissed by remember { mutableStateOf(false) }
     var detail by remember { mutableStateOf<Session?>(null) }
     var editorFor by remember { mutableStateOf<Session?>(null) }
     var editorOpen by remember { mutableStateOf(false) }
@@ -212,7 +216,8 @@ private fun Home(pal: Palette, resumeTick: Int) {
         // 装了新版、或者上次退出后闹钟被系统清了，开一次 App 就补回来
         Reminders.reschedule(ctx, stored)
         recovered = Store.lastRecovery
-        tt = if (stored.sessions.isNotEmpty()) stored else stored.copy(
+        // 有 termId 的空课表是用户自己新建的空白学期，不能拿示例把它盖掉
+        tt = if (stored.sessions.isNotEmpty() || stored.termId.isNotBlank()) stored else stored.copy(
             sessions = runCatching { Ics.parse(DEMO_ICS) }.getOrDefault(emptyList()),
             sourceLabel = "示例课表",
             showWeekend = false
@@ -225,12 +230,29 @@ private fun Home(pal: Palette, resumeTick: Int) {
         }
     }
 
-    // 每次回到前台都归位到今天 / 本周，不保留上次翻到哪儿了
-    LaunchedEffect(resumeTick) {
+    /** 学期里第一节 / 最后一节课那天。翻页翻出学期范围时落到这里。 */
+    fun firstDay(): LocalDate =
+        tt.sessions.minByOrNull { it.start }?.start?.toLocalDate() ?: d.termStart
+    fun lastDay(): LocalDate =
+        tt.sessions.maxByOrNull { it.end }?.end?.toLocalDate() ?: d.mondayOfWeek(maxOf(1, d.weeks)).plusDays(6)
+
+    /**
+     * "今天"该落在哪天。平时就是今天；但看的是已经结束的学期（从历史里切回来的），
+     * 今天早就不在学期里了，停在今天只会看到一片空白，所以落到最后一天。
+     * 还没开学的情况照旧停在今天 —— 那时"下一节是哪天"的提示正有用。
+     */
+    fun anchorDay(): LocalDate {
         val today = LocalDate.now()
+        return if (d.weeks > 0 && d.weekOf(today) > d.weeks) lastDay() else today
+    }
+
+    // 每次回到前台都归位到今天 / 本周，不保留上次翻到哪儿了；
+    // 切换学期、导入新学期之后同理
+    LaunchedEffect(resumeTick, tt.termId, tt.sessions.isEmpty()) {
+        val day = anchorDay()
         view = ViewMode.Day
-        dayDate = today
-        weekIdx = d.clampWeek(d.weekOf(today))
+        dayDate = day
+        weekIdx = d.clampWeek(d.weekOf(day))
     }
 
     // "进行中""还有几分钟"这些要自己走，半分钟一拍足够
@@ -239,6 +261,21 @@ private fun Home(pal: Palette, resumeTick: Int) {
             delay(30_000)
             now = System.currentTimeMillis()
         }
+    }
+
+    /** 整份课表换掉（切学期、导入完成）。数据已经在盘上了，这里只刷新界面、小组件和提醒。 */
+    fun replaceActive(next: Timetable) {
+        tt = next
+        endedDismissed = false
+        scope.launch {
+            refreshWidgets(ctx)
+            Reminders.reschedule(ctx, next)
+        }
+    }
+
+    fun openImport(asNew: Boolean) {
+        importAsNew = asNew
+        showImport = true
     }
 
     fun commit(next: Timetable) {
@@ -278,22 +315,29 @@ private fun Home(pal: Palette, resumeTick: Int) {
         if (view == ViewMode.Day) {
             val nd = dayDate.plusDays(dir.toLong())
             val w = d.weekOf(nd)
-            if (w < 1 || w > d.weeks) return
-            dayDate = nd
-            weekIdx = w
+            when {
+                w in 1..d.weeks -> { dayDate = nd; weekIdx = w }
+                // 停在学期外面（开学前 / 结束后）往学期里翻，直接跳到学期边上那天，
+                // 不然要一天天空翻过整个假期
+                dir > 0 && w < 1 -> { dayDate = firstDay(); weekIdx = d.clampWeek(d.weekOf(dayDate)) }
+                dir < 0 && w > d.weeks -> { dayDate = lastDay(); weekIdx = d.clampWeek(d.weekOf(dayDate)) }
+            }
         } else {
             weekIdx = d.clampWeek(weekIdx + dir)
         }
     }
 
     fun goToday() {
-        val today = LocalDate.now()
-        dayDate = today
-        weekIdx = d.clampWeek(d.weekOf(today))
+        val day = anchorDay()
+        dayDate = day
+        weekIdx = d.clampWeek(d.weekOf(day))
     }
 
     val today = LocalDate.now()
-    val atToday = if (dayMode) dayDate == today else weekIdx == d.clampWeek(d.weekOf(today))
+    val anchor = anchorDay()
+    val atToday = if (dayMode) dayDate == anchor else weekIdx == d.clampWeek(d.weekOf(anchor))
+    // 这学期已经上完了（多半是该换下学期了，或者正在翻历史学期）
+    val termEnded = has && d.weeks > 0 && d.weekOf(today) > d.weeks && tt.sourceLabel != "示例课表"
 
     // 手势里拿到的永远是最新的 step，不用因为课表一变就重建手势
     val stepRef = rememberUpdatedState<(Int) -> Unit> { step(it) }
@@ -320,7 +364,7 @@ private fun Home(pal: Palette, resumeTick: Int) {
                     }
                 },
                 onAdd = { editorFor = null; editorOpen = true },
-                onSettings = { showSettings = true }
+                onSettings = { settingsPage = SPage.Root; showSettings = true }
             )
 
             // 顶上的提示同一时间只放一条，按轻重排：数据出事 > 有新版 > 该查调课了。
@@ -340,8 +384,8 @@ private fun Home(pal: Palette, resumeTick: Int) {
                 tt.sourceLabel == "示例课表" -> NoticeCard(
                     pal, "这是示例课表，导入你自己的就会替换掉",
                     accent = pal.signal,
-                    primary = "导入" to { showImport = true },
-                    onClick = { showImport = true }
+                    primary = "导入" to { openImport(false) },
+                    onClick = { openImport(false) }
                 )
 
                 // 有新版就在这儿说一声，点一下就能更新完 —— 不用再下文件、进文件管理器
@@ -354,7 +398,15 @@ private fun Home(pal: Palette, resumeTick: Int) {
                     onClick = { showUpdate = true }
                 )
 
-                syncDue -> NoticeCard(
+                // 学期结束了：可能是该导入下学期了，也可能是从历史里切回来翻旧课表
+                termEnded && !endedDismissed -> NoticeCard(
+                    pal, "「${tt.termTitle()}」已经结束了",
+                    accent = pal.ink,
+                    primary = "换学期" to { settingsPage = SPage.Terms; showSettings = true },
+                    secondary = "知道了" to { endedDismissed = true }
+                )
+
+                syncDue && !termEnded -> NoticeCard(
                     pal,
                     if (daysSinceSync == null) "还没和教务系统对过课表"
                     else "已经 $daysSinceSync 天没查调课了",
@@ -386,7 +438,7 @@ private fun Home(pal: Palette, resumeTick: Int) {
                 if (d.isEmpty) {
                     EmptyState(
                         pal,
-                        onImport = { showImport = true },
+                        onImport = { openImport(false) },
                         onAdd = { editorFor = null; editorOpen = true },
                         onDemo = {
                             runCatching {
@@ -443,17 +495,19 @@ private fun Home(pal: Palette, resumeTick: Int) {
                 onApply = { commit(it) },
                 onEditOverride = { overrideDate = it },
                 onOpenUpdate = { showUpdate = true },
-                onImport = { showImport = true },
-                hasUpdate = newVersion != null
+                onImport = { openImport(it) },
+                onReplace = { replaceActive(it) },
+                hasUpdate = newVersion != null,
+                initialPage = settingsPage
             )
         }
     }
 
     if (showImport) {
         ImportDialog(
-            pal, tt,
+            pal, tt, presetNew = importAsNew,
             onClose = { showImport = false },
-            onImported = { tt = it; scope.launch { refreshWidgets(ctx) } }
+            onImported = { replaceActive(it) }
         )
     }
     if (showUpdate) {
@@ -1135,10 +1189,17 @@ private fun EmptyState(pal: Palette, onImport: () -> Unit, onAdd: () -> Unit, on
 
 @Composable
 private fun ImportDialog(
-    pal: Palette, tt: Timetable, onClose: () -> Unit, onImported: (Timetable) -> Unit
+    pal: Palette, tt: Timetable, presetNew: Boolean,
+    onClose: () -> Unit, onImported: (Timetable) -> Unit
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    // 现在有一份真课表时，才有"替换它还是存进历史"的问题
+    val canArchive = tt.worthArchiving()
+    val curTitle = remember(tt) { tt.termTitle() }
+    // 这学期已经上完了，再导入多半是下学期的 —— 默认就选"新学期"
+    val ended = remember(tt) { tt.info().last?.let { it < LocalDate.now() } ?: false }
+    var asNew by remember { mutableStateOf(canArchive && (presetNew || ended)) }
     var jwxtUrl by remember { mutableStateOf(tt.jwxtHome) }
     var msg by remember { mutableStateOf<String?>(null) }
     var err by remember { mutableStateOf(false) }
@@ -1153,8 +1214,22 @@ private fun ImportDialog(
         scope.launch { onImported(Store.load(ctx)) }
     }
 
-    Sheet(pal, "导入课表", onClose) {
+    Sheet(pal, if (asNew) "导入新学期" else "导入课表", onClose) {
         Column {
+            if (canArchive) {
+                Label(pal, "导入到")
+                ChoiceRow(
+                    pal, on = asNew, title = "新学期",
+                    desc = "「$curTitle」存进历史，随时能切回来"
+                ) { asNew = true }
+                Spacer(Modifier.height(Dim.s))
+                ChoiceRow(
+                    pal, on = !asNew, title = "替换当前学期",
+                    desc = "重新导入同一学期用，手动加的课和调休保留"
+                ) { asNew = false }
+                Spacer(Modifier.height(20.dp))
+            }
+
             Card(pal, color = pal.panel2) {
                 Column(Modifier.padding(Dim.l)) {
                     Text("从教务系统导入", color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -1183,7 +1258,9 @@ private fun ImportDialog(
                                 Intent(ctx, WebImportActivity::class.java)
                                     .putExtra(WebImportActivity.EXTRA_URL, u)
                                     .putExtra(WebImportActivity.EXTRA_HOME, u)
-                                    .putExtra(WebImportActivity.EXTRA_HAS_TERM, tt.termStartEpochDay != null)
+                                    // 新学期的开学日期还不知道，得问"今天第几周"
+                                    .putExtra(WebImportActivity.EXTRA_HAS_TERM, !asNew && tt.termStartEpochDay != null)
+                                    .putExtra(WebImportActivity.EXTRA_NEW_TERM, asNew)
                             )
                         }
                     }
@@ -1222,7 +1299,7 @@ private fun ImportDialog(
 
     picked?.let { uri ->
         FileImportDialog(
-            pal = pal, tt = tt, uri = uri,
+            pal = pal, tt = tt, uri = uri, newTerm = asNew,
             onClose = { picked = null },
             onImported = { onImported(it) }
         )

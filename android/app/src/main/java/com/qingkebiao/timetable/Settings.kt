@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -70,9 +71,10 @@ import java.time.LocalDate
  * 现在首页只放一张张分组卡片，每行一句话说清现状；细节点进去在子页面里。
  * 开关、缩放这种一下就改完的直接放在首页那一行上，不用点进去。
  */
-private enum class SPage(val title: String) {
+internal enum class SPage(val title: String) {
     Root("设置"),
-    Term("学期"),
+    Terms("学期"),
+    Term("开学日期与周数"),
     Overrides("调休"),
     Remind("上课提醒"),
     Sync("查调课与同步"),
@@ -86,11 +88,27 @@ fun SettingsPage(
     pal: Palette, d: Derived, hues: Map<String, Float>, hourDp: Dp,
     onHourDp: (Dp) -> Unit, onClose: () -> Unit,
     onApply: (Timetable) -> Unit, onEditOverride: (LocalDate) -> Unit,
-    onOpenUpdate: () -> Unit, onImport: () -> Unit, hasUpdate: Boolean
+    onOpenUpdate: () -> Unit,
+    /** 参数：是否作为新学期导入 */
+    onImport: (Boolean) -> Unit,
+    /** 切换学期、新建空白学期之后，当前课表整份换掉（已经落盘了，不用再存） */
+    onReplace: (Timetable) -> Unit,
+    hasUpdate: Boolean,
+    initialPage: SPage = SPage.Root
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var page by remember { mutableStateOf(SPage.Root) }
+    var page by remember { mutableStateOf(initialPage) }
+
+    // 历史学期列表。切换、改名、删除之后 termsTick++ 重读一遍
+    var termsTick by remember { mutableIntStateOf(0) }
+    var terms by remember { mutableStateOf<List<Timetable>>(emptyList()) }
+    LaunchedEffect(termsTick, d.tt.termId) { terms = Store.listTerms(ctx) }
+    var pickedTerm by remember { mutableStateOf<Timetable?>(null) }
+    var confirmDeleteTerm by remember { mutableStateOf(false) }
+    var confirmBlank by remember { mutableStateOf(false) }
+    /** 正在改名的学期：first = 学期 id（null = 当前学期），second = 原名 */
+    var renaming by remember { mutableStateOf<Pair<String?, String>?>(null) }
     var msg by remember { mutableStateOf<String?>(null) }
     var showPeriods by remember { mutableStateOf(false) }
     // 会覆盖/清掉数据的按钮一律两步，误触一下不至于把整张课表没了
@@ -119,7 +137,10 @@ fun SettingsPage(
     ) { uri: Uri? ->
         if (uri != null) scope.launch {
             runCatching { Store.exportTo(ctx, uri) }.fold(
-                onSuccess = { msg = "已导出 $it 节课的备份。换手机或重装后用「从备份恢复」读回来。" },
+                onSuccess = { (n, t) ->
+                    msg = "已导出备份：当前学期 $n 节课" + (if (t > 0) "，另有 $t 个历史学期" else "") +
+                        "。换手机或重装后用「从备份恢复」读回来。"
+                },
                 onFailure = { msg = "导出失败：${it.message}" }
             )
         }
@@ -250,14 +271,19 @@ fun SettingsPage(
                         SPage.Root -> {
                             SettingsGroup(pal, null) {
                                 SettingItem(
-                                    pal, "导入课表", "从教务系统网页或文件导入，会替换当前课表",
-                                    onClick = onImport
+                                    pal, "导入课表", "从教务系统网页或文件导入",
+                                    onClick = { onImport(false) }
                                 )
                             }
 
                             SettingsGroup(pal, "课表") {
                                 SettingItem(
                                     pal, "学期",
+                                    d.tt.termTitle() + if (terms.isNotEmpty()) " · 历史 ${terms.size} 个" else "",
+                                    onClick = { page = SPage.Terms }
+                                )
+                                SettingItem(
+                                    pal, "开学日期与周数",
                                     "第 1 周从 ${d.termStart.monthValue}月${d.termStart.dayOfMonth}日 开始 · 共 ${d.weeks} 周",
                                     onClick = { page = SPage.Term }
                                 )
@@ -362,6 +388,61 @@ fun SettingsPage(
                         }
 
                         SPage.Term -> TermSettings(pal, d, applyAndRecompute)
+
+                        SPage.Terms -> {
+                            val curTitle = d.tt.termTitle()
+                            SettingsGroup(pal, "当前学期") {
+                                SettingItem(pal, curTitle, termRange(d.tt.info())) {
+                                    TextBtn(pal, "改名") { renaming = null to curTitle }
+                                }
+                            }
+
+                            PrimaryButton(pal, "导入新学期的课表", modifier = Modifier.fillMaxWidth()) {
+                                onImport(true)
+                            }
+                            Spacer(Modifier.height(Dim.s))
+                            Hint(
+                                pal,
+                                if (d.tt.worthArchiving())
+                                    "导入成功后，「$curTitle」会自动存进下面的历史，随时能切回来。"
+                                else "现在没有课表，导入的就是当前学期。"
+                            )
+                            Spacer(Modifier.height(Dim.m))
+                            ConfirmAction(
+                                pal,
+                                confirming = confirmBlank,
+                                label = "新建空白学期",
+                                confirmText = "「$curTitle」存进历史，换上一份空白课表，之后自己一节一节加。" +
+                                    "作息表、提醒这些设置保留。",
+                                confirmLabel = "确认新建",
+                                primary = false,
+                                onAsk = { confirmBlank = true },
+                                onCancel = { confirmBlank = false },
+                                onConfirm = {
+                                    confirmBlank = false
+                                    scope.launch {
+                                        runCatching { Store.startBlankTerm(ctx) }.fold(
+                                            onSuccess = { onReplace(it); termsTick++; msg = "已新建空白学期。" },
+                                            onFailure = { msg = "新建失败：${it.message}" }
+                                        )
+                                    }
+                                }
+                            )
+
+                            Spacer(Modifier.height(Dim.xl))
+                            SettingsGroup(pal, "历史学期") {
+                                if (terms.isEmpty()) {
+                                    SettingItem(pal, "还没有历史学期", "导入新学期时，当前这份会自动存进来")
+                                } else {
+                                    terms.forEach { t ->
+                                        SettingItem(
+                                            pal, t.termTitle(), termRange(t.info()),
+                                            onClick = { confirmDeleteTerm = false; pickedTerm = t }
+                                        )
+                                    }
+                                }
+                            }
+                        }
 
                         SPage.Overrides -> {
                             Hint(pal, "某天放假，或者某天按另一天的课上。也可以在「今日」视图里直接改当天。")
@@ -613,7 +694,7 @@ fun SettingsPage(
                             Spacer(Modifier.height(Dim.xl))
                             Label(pal, "清空")
                             if (!confirmClear) {
-                                DangerChip(pal, "清空课表", modifier = Modifier.fillMaxWidth().height(Dim.touch)) {
+                                DangerChip(pal, "清空当前学期", modifier = Modifier.fillMaxWidth().height(Dim.touch)) {
                                     confirmClear = true
                                 }
                             } else {
@@ -621,7 +702,7 @@ fun SettingsPage(
                                     pal,
                                     "确定要清空吗？${d.tt.sessions.size} 节课、" +
                                         "${d.tt.overrides.size} 条调休记录和作息设置都会删掉，删了没法撤销。" +
-                                        "只是想换一份课表的话，直接重新导入就行，不用先清空。",
+                                        "历史学期不受影响。只是想换一份课表的话，直接重新导入就行，不用先清空。",
                                     error = true
                                 )
                                 Spacer(Modifier.height(Dim.m))
@@ -686,6 +767,88 @@ fun SettingsPage(
         }
     }
 
+    pickedTerm?.let { t ->
+        val title = t.termTitle()
+        Sheet(
+            pal, title, onClose = { pickedTerm = null },
+            footer = {
+                PrimaryButton(pal, "切换到这个学期", modifier = Modifier.fillMaxWidth()) {
+                    scope.launch {
+                        runCatching { Store.switchTerm(ctx, t.termId) }.fold(
+                            onSuccess = {
+                                onReplace(it)
+                                pickedTerm = null
+                                termsTick++
+                                msg = "已切换到「${it.termTitle()}」。"
+                            },
+                            onFailure = { pickedTerm = null; msg = "切换失败：${it.message}" }
+                        )
+                    }
+                }
+            }
+        ) {
+            Column {
+                Text(termRange(t.info()), color = pal.ink2, fontSize = Fs.body, style = NumStyle)
+                Spacer(Modifier.height(Dim.s))
+                Hint(pal, "切过去之后，现在的「${d.tt.termTitle()}」会存进历史，不会丢。")
+                Spacer(Modifier.height(Dim.l))
+                Row {
+                    OutlineChip(pal, "改名") { renaming = t.termId to title }
+                    Spacer(Modifier.width(Dim.s))
+                    if (!confirmDeleteTerm) {
+                        DangerChip(pal, "删除") { confirmDeleteTerm = true }
+                    } else {
+                        DangerChip(pal, "确认删除") {
+                            scope.launch {
+                                Store.deleteTerm(ctx, t.termId)
+                                pickedTerm = null
+                                termsTick++
+                                msg = "已删除「$title」。"
+                            }
+                        }
+                    }
+                }
+                if (confirmDeleteTerm) {
+                    Spacer(Modifier.height(Dim.m))
+                    MsgBox(pal, "删掉就找不回来了。不确定的话，先到 数据与隐私 里导出一份备份。", error = true)
+                }
+            }
+        }
+    }
+
+    renaming?.let { (id, initial) ->
+        var text by remember(id, initial) { mutableStateOf(initial) }
+        Sheet(
+            pal, "学期名称", onClose = { renaming = null },
+            footer = {
+                PrimaryButton(
+                    pal, "保存", enabled = text.isNotBlank(), modifier = Modifier.fillMaxWidth()
+                ) {
+                    val name = text.trim()
+                    if (id == null) {
+                        onApply(d.tt.copy(termName = name))
+                    } else {
+                        scope.launch {
+                            runCatching { Store.renameTerm(ctx, id, name) }
+                                .onFailure { msg = "改名失败：${it.message}" }
+                            termsTick++
+                        }
+                        pickedTerm = null
+                    }
+                    renaming = null
+                }
+            }
+        ) {
+            Column {
+                OutlinedTextField(
+                    value = text, onValueChange = { text = it },
+                    placeholder = { Text("2025-2026 第一学期") },
+                    singleLine = true, shape = FieldShape, modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+
     if (showPeriods) {
         PeriodEditorDialog(
             pal = pal,
@@ -741,4 +904,11 @@ private fun ConfirmAction(
             PrimaryButton(pal, confirmLabel, modifier = Modifier.weight(1f), onClick = onConfirm)
         }
     }
+}
+
+/** "2025.9.1 – 2026.1.10 · 312 节" */
+private fun termRange(i: TermInfo): String {
+    if (i.first == null || i.last == null) return "还没有课"
+    fun f(d: LocalDate) = "${d.year}.${d.monthValue}.${d.dayOfMonth}"
+    return "${f(i.first)} – ${f(i.last)} · ${i.count} 节"
 }

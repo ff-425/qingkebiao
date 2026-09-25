@@ -444,6 +444,36 @@ fun SettingItem(
     }
 }
 
+/** 单选的一行：圆圈 + 标题 + 一句说明。 */
+@Composable
+fun ChoiceRow(pal: Palette, on: Boolean, title: String, desc: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (on) pal.ink.copy(alpha = 0.06f) else pal.panel2)
+            .border(1.dp, if (on) pal.ink else Color.Transparent, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = Dim.m),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(18.dp).border(2.dp, if (on) pal.ink else pal.faint, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            if (on) Box(Modifier.size(8.dp).background(pal.ink, CircleShape))
+        }
+        Spacer(Modifier.width(Dim.m))
+        Column(Modifier.weight(1f)) {
+            Text(
+                title, color = pal.ink, fontSize = Fs.body,
+                fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal
+            )
+            Text(desc, color = pal.muted, fontSize = Fs.caption, lineHeight = 17.sp)
+        }
+    }
+}
+
 /* ----------------------------------------------------------- 表单 */
 
 @Composable
