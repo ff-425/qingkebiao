@@ -67,6 +67,8 @@ class WebImportActivity : ComponentActivity() {
         /** 已经知道开学日期就不必再问"今天是第几周" */
         const val EXTRA_HAS_TERM = "has_term"
         const val EXTRA_HOME = "home_url"
+        /** 作为新学期导入：导入成功时当前课表存进历史 */
+        const val EXTRA_NEW_TERM = "new_term"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,7 +78,8 @@ class WebImportActivity : ComponentActivity() {
             ?: "https://www.baidu.com"
         val hasTerm = intent.getBooleanExtra(EXTRA_HAS_TERM, false)
         val home = intent.getStringExtra(EXTRA_HOME).orEmpty()
-        setContent { WebImportScreen(start, hasTerm, home) { finish() } }
+        val newTerm = intent.getBooleanExtra(EXTRA_NEW_TERM, false)
+        setContent { WebImportScreen(start, hasTerm, home, newTerm) { finish() } }
     }
 }
 
@@ -199,6 +202,7 @@ private fun WebImportScreen(
     startUrl: String,
     hasTerm: Boolean,
     homeUrl: String,
+    newTerm: Boolean,
     onFinish: () -> Unit
 ) {
     val dark = isSystemInDarkTheme()
@@ -246,7 +250,8 @@ private fun WebImportScreen(
 
     // 已经有课表时，这次抓到的就不是"导入"而是"对一遍有没有调课"。
     // 差异比整张课表有用得多 —— 学校调一节课，用户要看的是那一节，不是全部 21 个块。
-    val oldBlocks = stored?.zfBlocks.orEmpty()
+    // 导入新学期时不跟旧学期比 —— 整张都是新的，列"变动"没有意义
+    val oldBlocks = if (newTerm) emptyList() else stored?.zfBlocks.orEmpty()
     val isResync = oldBlocks.isNotEmpty()
     val changes: List<Diff.Change> = remember(blocks, oldBlocks, effPeriods) {
         val bs = blocks
@@ -282,7 +287,8 @@ private fun WebImportScreen(
             // 读到了就立刻存下来，不用等他导入。
             Periods.sniff(html)?.let { ps ->
                 sniffed = ps
-                scope.launch { Store.savePeriods(ctx, ps) }
+                // 导入新学期时别往旧学期里写：作息会随导入一起带进新学期
+                if (!newTerm) scope.launch { Store.savePeriods(ctx, ps) }
             }
             groups = Periods.deriveGroups(html).ifEmpty { groups }
 
@@ -530,7 +536,8 @@ private fun WebImportScreen(
                                             homeUrl = homeUrl,
                                             parser = parser,
                                             sniffedPeriods = sniffed,
-                                            groups = groups
+                                            groups = groups,
+                                            newTerm = newTerm
                                         )
                                     }.fold(
                                         onSuccess = { tt ->
@@ -543,6 +550,7 @@ private fun WebImportScreen(
                                                     "作息、开学日期、你手动加的课和调休记录都没动。"
                                             } else {
                                                 "已导入 ${tt.sessions.size} 节课。" +
+                                                    (if (newTerm) "上个学期已经存进历史，设置 → 学期 里能切回去。" else "") +
                                                     "时间对不上就到设置里改「节次时间」，改完会自动重算。"
                                             }
                                         },

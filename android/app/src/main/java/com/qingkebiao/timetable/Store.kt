@@ -39,6 +39,16 @@ object Store {
 
     private fun file(ctx: Context) = File(ctx.filesDir, FILE_NAME)
 
+    /** 先写临时文件再改名，避免写一半被杀进程留下坏 JSON。 */
+    private fun writeAtomic(target: File, text: String) {
+        val tmp = File(target.parentFile, target.name + ".tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(target)) {
+            target.writeText(tmp.readText())
+            tmp.delete()
+        }
+    }
+
     suspend fun load(ctx: Context): Timetable = withContext(Dispatchers.IO) {
         val f = file(ctx)
         if (!f.exists()) return@withContext Timetable()
@@ -73,13 +83,81 @@ object Store {
             ?: emptyList()
 
     suspend fun save(ctx: Context, tt: Timetable) = withContext(Dispatchers.IO) {
-        // 先写临时文件再改名，避免写一半被杀进程留下坏 JSON
-        val tmp = File(ctx.filesDir, "$FILE_NAME.tmp")
-        tmp.writeText(json.encodeToString(tt))
-        if (!tmp.renameTo(file(ctx))) {
-            file(ctx).writeText(tmp.readText())
-            tmp.delete()
+        writeAtomic(file(ctx), json.encodeToString(tt))
+    }
+
+    /* ---------------- 多学期 ----------------
+     *
+     * 当前学期还是 timetable.json，一个字没变 —— 小组件、上课提醒、查调课
+     * 读的都是它，完全不用知道"学期"这回事。
+     * 历史学期各自一个文件放在 terms/ 下面，文件内容就是一份完整的 Timetable。
+     * 切换学期 = 把当前这份存进 terms/，再把选中的那份写成 timetable.json。
+     */
+
+    private const val TERMS_DIR = "terms"
+
+    private fun termsDir(ctx: Context) = File(ctx.filesDir, TERMS_DIR).apply { mkdirs() }
+
+    private fun termFile(ctx: Context, id: String) = File(termsDir(ctx), "$id.json")
+
+    /**
+     * 把一份课表存进历史。示例课表、空课表不存。
+     * 存的时候把自动起的名字定下来 —— 不然以后改了开学日期，名字会跟着变。
+     */
+    private fun archive(ctx: Context, tt: Timetable) {
+        if (!tt.worthArchiving()) return
+        val named = tt.copy(
+            termId = tt.termId.ifBlank { newId() },
+            termName = tt.termTitle()
+        )
+        writeAtomic(termFile(ctx, named.termId), json.encodeToString(named))
+    }
+
+    /** 历史学期，新的在前。当前学期不在里面。 */
+    suspend fun listTerms(ctx: Context): List<Timetable> = withContext(Dispatchers.IO) {
+        val activeId = load(ctx).termId
+        (termsDir(ctx).listFiles { f: File -> f.name.endsWith(".json") } ?: emptyArray())
+            .mapNotNull { f -> runCatching { json.decodeFromString<Timetable>(f.readText()) }.getOrNull() }
+            // 切换到一半被杀进程，可能当前和历史里各有一份同 id 的，以当前为准
+            .filter { it.termId.isNotBlank() && it.termId != activeId }
+            .sortedByDescending { t -> t.sessions.minOfOrNull { it.start } ?: 0L }
+    }
+
+    /**
+     * 切到历史里的某个学期。当前这份先存进历史，再换上选中的那份。
+     * 顺序是故意的：任何一步被打断，两份数据都至少还有一处留着。
+     */
+    suspend fun switchTerm(ctx: Context, id: String): Timetable = withContext(Dispatchers.IO) {
+        val f = termFile(ctx, id)
+        val target = runCatching { json.decodeFromString<Timetable>(f.readText()) }.getOrElse {
+            throw IOException("这个学期的数据读不出来了（${it.message ?: "格式不对"}）。")
         }
+        val cur = load(ctx)
+        archive(ctx, cur)
+        val next = target.withGlobalsFrom(cur)
+        save(ctx, next)
+        f.delete()
+        next
+    }
+
+    /** 当前学期存进历史，换上一份空白的新学期（手动一节一节加的人用）。 */
+    suspend fun startBlankTerm(ctx: Context): Timetable = withContext(Dispatchers.IO) {
+        val cur = load(ctx)
+        archive(ctx, cur)
+        val fresh = cur.freshTerm()
+        save(ctx, fresh)
+        fresh
+    }
+
+    suspend fun deleteTerm(ctx: Context, id: String) = withContext(Dispatchers.IO) {
+        termFile(ctx, id).delete()
+        Unit
+    }
+
+    suspend fun renameTerm(ctx: Context, id: String, name: String) = withContext(Dispatchers.IO) {
+        val f = termFile(ctx, id)
+        val tt = json.decodeFromString<Timetable>(f.readText())
+        writeAtomic(f, json.encodeToString(tt.copy(termName = name.trim())))
     }
 
     suspend fun clear(ctx: Context) = withContext(Dispatchers.IO) {
@@ -94,25 +172,46 @@ object Store {
      * 导出的就是内部那个 JSON 原文，没有额外格式 —— 恢复的时候原样写回去，
      * 中间不做任何转换，也就不可能转丢。
      */
-    suspend fun exportTo(ctx: Context, uri: Uri): Int = withContext(Dispatchers.IO) {
+    /**
+     * 有了多学期之后，备份把历史学期也一起带上。
+     * 格式是 { active: 当前课表, terms: [历史学期…] }；老版本导出的是一份裸 Timetable，
+     * 恢复时两种都认。
+     */
+    @kotlinx.serialization.Serializable
+    private data class Backup(
+        val version: Int = 2,
+        val active: Timetable,
+        val terms: List<Timetable> = emptyList()
+    )
+
+    /** 返回（当前学期几节课，历史学期几个）。 */
+    suspend fun exportTo(ctx: Context, uri: Uri): Pair<Int, Int> = withContext(Dispatchers.IO) {
         val tt = load(ctx)
-        val text = json.encodeToString(tt)
+        val terms = listTerms(ctx)
+        val text = json.encodeToString(Backup(active = tt, terms = terms))
         ctx.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
             ?: throw IOException("写不了这个位置，换个文件夹试试。")
-        tt.sessions.size
+        tt.sessions.size to terms.size
     }
 
     suspend fun restoreFrom(ctx: Context, uri: Uri): Timetable = withContext(Dispatchers.IO) {
         val text = ctx.contentResolver.openInputStream(uri)?.use { it.reader().readText() }
             ?: throw IOException("读不出这个文件。")
-        // 先解析，解析得动才覆盖 —— 不能拿一个坏文件把好数据盖掉
-        val tt = runCatching { json.decodeFromString<Timetable>(text) }.getOrElse {
-            throw IOException("这不像清课表的备份文件（${it.message ?: "格式不对"}）。")
-        }
-        if (tt.sessions.isEmpty() && tt.zfBlocks.isEmpty()) {
+        // 先解析，解析得动才覆盖 —— 不能拿一个坏文件把好数据盖掉。
+        // 新格式带 active 字段；老格式是一份裸课表，按新格式解析会因为缺 active 失败。
+        val backup = runCatching { json.decodeFromString<Backup>(text) }.getOrNull()
+            ?: runCatching { Backup(active = json.decodeFromString<Timetable>(text)) }.getOrElse {
+                throw IOException("这不像清课表的备份文件（${it.message ?: "格式不对"}）。")
+            }
+        val tt = backup.active
+        if (tt.sessions.isEmpty() && tt.zfBlocks.isEmpty() && backup.terms.isEmpty()) {
             throw IOException("这个备份里没有课程，没必要恢复。")
         }
         save(ctx, tt)
+        // 历史学期按 id 写回去，同 id 的覆盖，手机上已有的其他学期不动
+        backup.terms.filter { it.termId.isNotBlank() && it.termId != tt.termId }.forEach {
+            writeAtomic(termFile(ctx, it.termId), json.encodeToString(it))
+        }
         tt
     }
 
@@ -205,9 +304,12 @@ object Store {
         /** 本次从网页读到的真实作息，没读到传 null */
         sniffedPeriods: List<PeriodSlot>? = null,
         /** 课表页的"上午/下午/晚上各几节"，用于读不到真时间时按真实结构推算 */
-        groups: List<Pair<String, Int>> = emptyList()
+        groups: List<Pair<String, Int>> = emptyList(),
+        /** true = 作为新学期导入：当前这份存进历史，手动加的课和调休不带过来 */
+        newTerm: Boolean = false
     ): Timetable {
-        val old = load(ctx)
+        val current = load(ctx)
+        val old = if (newTerm) current.freshTerm() else current
 
         // 作息表来源优先级：这次读到的 > 用户已确认过的 > 按页面分组推算 > 通用默认
         val periods: List<PeriodSlot>
@@ -243,6 +345,8 @@ object Store {
             periodsSource = periodsSource,
             lastSyncEpochDay = java.time.LocalDate.now().toEpochDay()
         )
+        // 到这里才归档旧学期：前面任何一步解析失败，当前课表都原封不动
+        if (newTerm) withContext(Dispatchers.IO) { archive(ctx, current) }
         save(ctx, tt)
         return tt
     }

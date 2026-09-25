@@ -109,7 +109,82 @@ data class Timetable(
     /** 上课前提醒。默认关，开了才会申请通知权限、才会排闹钟。 */
     val remindEnabled: Boolean = false,
     /** 提前几分钟提醒。 */
-    val remindMinutes: Int = 15
+    val remindMinutes: Int = 15,
+    /**
+     * 这份课表属于哪个学期。老数据里没有这个字段，读出来是空的，
+     * 等它第一次被存进历史时再补一个 id。
+     */
+    val termId: String = "",
+    /** 学期名，用户可以改。空 = 按开学日期自动起名，见 [autoTermName]。 */
+    val termName: String = ""
+)
+
+/* ---------------------------------------------------------------- 多学期 */
+
+/**
+ * 按开学日期起个学期名。国内校历：秋季开学（8 月到次年 1 月）是第一学期，
+ * 春季开学（2 到 7 月）是第二学期，学年跨两个自然年。
+ */
+fun autoTermName(start: LocalDate): String {
+    val m = start.monthValue
+    return if (m in 2..7) {
+        "${start.year - 1}-${start.year} 第二学期"
+    } else {
+        val y = if (m == 1) start.year - 1 else start.year
+        "$y-${y + 1} 第一学期"
+    }
+}
+
+/** 界面上显示的学期名：用户起的名字优先，否则按开学日期自动起。 */
+fun Timetable.termTitle(zone: ZoneId = ZoneId.systemDefault()): String =
+    termName.ifBlank {
+        if (sessions.isEmpty()) "新学期" else autoTermName(Derived(this, zone).termStart)
+    }
+
+/** 值不值得存进历史：示例课表和空课表不存。 */
+fun Timetable.worthArchiving(): Boolean =
+    sessions.isNotEmpty() && sourceLabel != "示例课表"
+
+/**
+ * 开一个新学期：课、调休、开学日期、教务系统课程块全部清空，
+ * 但"这个人的习惯"留着 —— 同一所学校作息表不会变，教务系统网址不会变，
+ * 提醒开没开、提前几分钟、更新地址这些也不该因为换学期就被重置。
+ */
+fun Timetable.freshTerm(): Timetable = Timetable(
+    termId = newId(),
+    showWeekend = showWeekend,
+    periods = periods,
+    periodsSource = periodsSource,
+    jwxtHome = jwxtHome,
+    jwxtPage = jwxtPage,
+    updateUrl = updateUrl,
+    syncRemindDays = syncRemindDays,
+    updateSnoozeCode = updateSnoozeCode,
+    updateSnoozeDay = updateSnoozeDay,
+    remindEnabled = remindEnabled,
+    remindMinutes = remindMinutes
+)
+
+/**
+ * 从历史里切回某个学期时，把"跟人走不跟学期走"的设置从当前这份带过去。
+ * 否则切一次学期，提醒就被关掉、更新地址变回旧的了。
+ */
+fun Timetable.withGlobalsFrom(cur: Timetable): Timetable = copy(
+    updateUrl = cur.updateUrl,
+    updateSnoozeCode = cur.updateSnoozeCode,
+    updateSnoozeDay = cur.updateSnoozeDay,
+    remindEnabled = cur.remindEnabled,
+    remindMinutes = cur.remindMinutes,
+    syncRemindDays = cur.syncRemindDays
+)
+
+/** 学期列表上显示的那一行：从第一节到最后一节，一共几节。 */
+data class TermInfo(val first: LocalDate?, val last: LocalDate?, val count: Int)
+
+fun Timetable.info(zone: ZoneId = ZoneId.systemDefault()): TermInfo = TermInfo(
+    first = sessions.minByOrNull { it.start }?.start?.toLocalDate(zone),
+    last = sessions.maxByOrNull { it.end }?.end?.toLocalDate(zone),
+    count = sessions.size
 )
 
 fun Long.toLocalDateTime(zone: ZoneId = ZoneId.systemDefault()): LocalDateTime =
