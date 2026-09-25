@@ -247,15 +247,28 @@ class Derived(val tt: Timetable, val zone: ZoneId = ZoneId.systemDefault()) {
 
     fun clampWeek(w: Int): Int = w.coerceIn(1, maxOf(1, weeks))
 
-    private fun rawOn(d: LocalDate): List<Session> =
-        tt.sessions.filter { it.start.toLocalDate(zone) == d }
+    /**
+     * 按日期分好组的课。以前每问一次"某天有什么课"都把整学期几百节课
+     * 挨个换算成日期再筛，而"下一节"一次就要问 23 天，一屏周视图又要问 7 天 ——
+     * 翻页、每半分钟刷新都在主线程上做成千上万次时区换算。现在只算一遍。
+     */
+    private val byDay: Map<LocalDate, List<Session>> by lazy {
+        tt.sessions.groupBy { it.start.toLocalDate(zone) }
+    }
+
+    /** 同一个 Derived 里某天的结果不会变，算过就记下来。 */
+    private val onCache = java.util.concurrent.ConcurrentHashMap<LocalDate, List<Session>>()
+
+    private fun rawOn(d: LocalDate): List<Session> = byDay[d] ?: emptyList()
 
     /**
      * 某天实际要上的课，已应用调休规则：
      *   HOLIDAY —— 原本的课全不上，但手动加的事件（考试、会议）仍然显示
      *   FOLLOW  —— 照搬来源日的课，时刻不变，外加这天自己手动加的事件
      */
-    fun sessionsOn(d: LocalDate): List<Session> {
+    fun sessionsOn(d: LocalDate): List<Session> = onCache.getOrPut(d) { computeOn(d) }
+
+    private fun computeOn(d: LocalDate): List<Session> {
         val ov = overrideFor(d)
         val own = rawOn(d)
         val list = when {

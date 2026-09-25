@@ -75,6 +75,11 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // 发给用户的就是这个构建类型，所以不能是"可调试"的。
+            // 可调试的包 ART 不做 AOT、JIT 也收着跑，R8 的优化也全被关掉
+            // （编译日志里那句 "debuggable and has isMinifyEnabled" 警告说的就是这个）——
+            // v26 换成 Compose 新界面、动画多了以后，卡顿主要就是这么来的。
+            isDebuggable = false
             // 我们只发这一个构建类型，所以 debug 也用 release key 签
             signingConfig =
                 if (hasReleaseKey) signingConfigs.getByName("release")
@@ -118,6 +123,10 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     // 顶栏、设置列表用的那几个基础图标。material3 本来就间接带着它，写明是免得哪天升级被拿掉
     implementation("androidx.compose.material:material-icons-core")
+    // Compose 各个库自带"基线配置文件"（哪些代码要提前编译成机器码），
+    // 但只有通过应用商店装的才会自动用上。我们是直接装 APK，
+    // 靠这个库在首次启动后把配置文件交给系统，冷启动和首次滑动都会顺很多。
+    implementation("androidx.profileinstaller:profileinstaller:1.3.1")
 
     // 桌面小组件
     implementation("androidx.glance:glance-appwidget:1.1.0")

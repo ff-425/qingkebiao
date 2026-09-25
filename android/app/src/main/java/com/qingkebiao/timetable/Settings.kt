@@ -7,8 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
@@ -59,8 +58,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDate
 
@@ -171,7 +172,9 @@ internal fun SettingsPage(
         }
     }
 
-    var corrupt by remember { mutableStateOf(Store.corruptFiles(ctx)) }
+    // 翻目录、读文件都放到后台线程，别卡在设置页滑进来的那几帧里
+    var corrupt by remember { mutableStateOf<List<File>>(emptyList()) }
+    LaunchedEffect(Unit) { corrupt = withContext(Dispatchers.IO) { Store.corruptFiles(ctx) } }
     var pendingExport by remember { mutableStateOf<File?>(null) }
     // 隔离起来的文件在应用私有目录里，手机上翻不到。能导出来才叫"留着"。
     val exporter = rememberLauncherForActivityResult(
@@ -202,7 +205,15 @@ internal fun SettingsPage(
 
     val canPost = remember(permTick) { Reminders.canPost(ctx) }
     val canExact = remember(permTick) { Reminders.canExact(ctx) }
-    val crashes = remember(permTick) { Crash.list(ctx) }
+    var crashes by remember { mutableStateOf<List<File>>(emptyList()) }
+    var crashSummary by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(permTick) {
+        withContext(Dispatchers.IO) {
+            val list = Crash.list(ctx)
+            val summary = if (list.isNotEmpty()) Crash.latestSummary(ctx) else null
+            list to summary
+        }.let { (list, summary) -> crashes = list; crashSummary = summary }
+    }
 
     fun toggleRemind() {
         val turningOn = !d.tt.remindEnabled
@@ -252,11 +263,11 @@ internal fun SettingsPage(
                 targetState = page,
                 transitionSpec = {
                     val deeper = targetState != SPage.Root
-                    (slideInHorizontally(tween(240)) { w -> if (deeper) w / 4 else -w / 4 } + fadeIn(tween(200)))
-                        .togetherWith(
-                            slideOutHorizontally(tween(200)) { w -> if (deeper) -w / 4 else w / 4 } +
-                                fadeOut(tween(150))
-                        )
+                    slideInHorizontally(tween(PAGE_MS, easing = FastOutSlowInEasing)) { w ->
+                        if (deeper) w else -w
+                    } togetherWith slideOutHorizontally(tween(PAGE_MS, easing = FastOutSlowInEasing)) { w ->
+                        if (deeper) -w else w
+                    }
                 },
                 label = "settings"
             ) { p ->
@@ -660,7 +671,7 @@ internal fun SettingsPage(
                                                 Spacer(Modifier.width(6.dp))
                                                 DangerChip(pal, "删除") {
                                                     f.delete()
-                                                    corrupt = Store.corruptFiles(ctx)
+                                                    corrupt = corrupt - f
                                                 }
                                             }
                                         }
@@ -725,7 +736,7 @@ internal fun SettingsPage(
                             // 崩溃记录只在真崩过之后才出现
                             MsgBox(
                                 pal,
-                                "App 崩过 ${crashes.size} 次。" + (Crash.latestSummary(ctx) ?: "") +
+                                "App 崩过 ${crashes.size} 次。" + (crashSummary ?: "") +
                                     "\n导出发我，我照着修。里面只有异常堆栈和机型系统版本，没有你的课表内容。",
                                 error = true
                             )
