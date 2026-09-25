@@ -14,7 +14,9 @@ data class Palette(
     val faint: Color,
     val rule: Color,
     val ruleSoft: Color,
-    val signal: Color
+    val signal: Color,
+    /** 出错、权限没给这类"要处理但不是现在"的提示。红色只留给"现在"和"今天"。 */
+    val warn: Color
 )
 
 val LightPalette = Palette(
@@ -28,7 +30,8 @@ val LightPalette = Palette(
     faint = Color(0xFF96A09C),
     rule = Color(0xFFD2D8D5),
     ruleSoft = Color(0xFFE2E7E4),
-    signal = Color(0xFFE03A2F)
+    signal = Color(0xFFE03A2F),
+    warn = Color(0xFFB4570F)
 )
 
 val DarkPalette = Palette(
@@ -42,7 +45,8 @@ val DarkPalette = Palette(
     faint = Color(0xFF646D6A),
     rule = Color(0xFF272D2B),
     ruleSoft = Color(0xFF1F2524),
-    signal = Color(0xFFFF5A4D)
+    signal = Color(0xFFFF5A4D),
+    warn = Color(0xFFE9A04A)
 )
 
 /**
