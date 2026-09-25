@@ -20,8 +20,8 @@ android {
         // 每次发版都要涨。涨了系统才会拦住"装回旧版"——
         // 旧版读不懂新数据文件是唯一能把用户手动加的课和调休记录搞没的路径。
         // versionName 就用大版本号，和发给用户的 qingkebiao-vN.apk 对得上。
-        versionCode = 26
-        versionName = "26"
+        versionCode = 27
+        versionName = "27"
 
         // OCR 带进来的原生库每个 ABI 都是十几兆，而一台手机只用得上一份。
         // 默认只打 arm64-v8a（2017 年以后的安卓机几乎全是），
