@@ -335,6 +335,15 @@ private fun Home(pal: Palette, resumeTick: Int) {
                     primary = "知道了" to { recovered = null; Store.lastRecovery = null }
                 )
 
+                // 首次打开会自动放一份示例课表。导入入口挪进设置以后，
+                // 新装的同学看到的就是一份假的"高等数学"，首页上没有任何地方说这是示例、该去哪导入。
+                tt.sourceLabel == "示例课表" -> NoticeCard(
+                    pal, "这是示例课表，导入你自己的就会替换掉",
+                    accent = pal.signal,
+                    primary = "导入" to { showImport = true },
+                    onClick = { showImport = true }
+                )
+
                 // 有新版就在这儿说一声，点一下就能更新完 —— 不用再下文件、进文件管理器
                 newVersion != null && !showUpdate -> NoticeCard(
                     pal,

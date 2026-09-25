@@ -31,7 +31,9 @@ PW=$(grep '^storePassword=' keystore.properties | cut -d= -f2)
 ALIAS=$(grep '^keyAlias=' keystore.properties | cut -d= -f2)
 
 echo "==> 编译（$ABI）"
-"$GRADLE" assembleDebug --console=plain -PqkbAbi="$ABI" 2>&1 | grep -E "^e: |BUILD" || true
+# 一定要 clean：debug 构建类型的增量打包只往 APK 里追加、不压实，
+# 连着改几次代码再打，包能凭空胖 4 MB（19 → 23 MB），离 Cloudflare 25 MiB 上限就不远了
+"$GRADLE" clean assembleDebug --console=plain -PqkbAbi="$ABI" 2>&1 | grep -E "^e: |BUILD" || true
 
 APK=app/build/outputs/apk/debug/app-debug.apk
 [ -f "$APK" ] || { echo "没找到构建产物"; exit 1; }

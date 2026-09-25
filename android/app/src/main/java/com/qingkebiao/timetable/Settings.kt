@@ -56,6 +56,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -107,6 +109,10 @@ fun SettingsPage(
     val notifPerm = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { permTick++ }
+    // 点"去开通知"那一刻就 permTick++ 是没用的 —— 那时用户还没去开，
+    // 重算出来仍然是"没开"，等开完回来页面也不会再算，红字就一直挂着。
+    // 所以每次页面回到前台都重查一遍。
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { permTick++ }
 
     val backupExport = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
