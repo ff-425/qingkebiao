@@ -116,6 +116,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
+    // 顶栏、设置列表用的那几个基础图标。material3 本来就间接带着它，写明是免得哪天升级被拿掉
+    implementation("androidx.compose.material:material-icons-core")
 
     // 桌面小组件
     implementation("androidx.glance:glance-appwidget:1.1.0")

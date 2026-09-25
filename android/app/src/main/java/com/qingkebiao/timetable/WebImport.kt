@@ -42,8 +42,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -324,19 +326,21 @@ private fun WebImportScreen(
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
 
                 Row(
-                    Modifier.fillMaxWidth().background(pal.panel).padding(10.dp),
+                    Modifier.fillMaxWidth().background(pal.panel)
+                        .padding(start = Dim.l, end = Dim.xs, top = Dim.s, bottom = Dim.s),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("教务系统导入", color = pal.ink, fontSize = 14.sp)
+                        Text("教务系统导入", color = pal.ink, fontSize = Fs.title, fontWeight = FontWeight.SemiBold)
                         Text(
                             currentUrl,
-                            color = pal.faint,
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace,
-                            maxLines = 1
+                            color = pal.muted,
+                            fontSize = Fs.micro,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
+                    Spacer(Modifier.width(Dim.s))
                     OutlineChip(pal, if (desktopUa) "手机版" else "电脑版") {
                         desktopUa = !desktopUa
                         webView?.let { wv ->
@@ -344,8 +348,7 @@ private fun WebImportScreen(
                             wv.reload()
                         }
                     }
-                    Spacer(Modifier.width(6.dp))
-                    OutlineChip(pal, "关闭", onClick = onFinish)
+                    IconBtn(pal, Icons.Default.Close, "关闭", onClick = onFinish)
                 }
                 HorizontalDivider(thickness = 1.dp, color = pal.rule)
 
@@ -420,7 +423,7 @@ private fun WebImportScreen(
                 }
 
                 HorizontalDivider(thickness = 1.dp, color = pal.rule)
-                Column(Modifier.fillMaxWidth().background(pal.panel).padding(10.dp)) {
+                Column(Modifier.fillMaxWidth().background(pal.panel).padding(horizontal = Dim.l, vertical = Dim.m)) {
                     msg?.let {
                         MsgBox(pal, it, err)
                         Spacer(Modifier.height(6.dp))
@@ -429,7 +432,7 @@ private fun WebImportScreen(
                         Text(
                             "时间：" + periodsNote,
                             color = if (sniffed != null || storedIsUserSet) pal.ink2 else pal.muted,
-                            fontSize = 11.5.sp, lineHeight = 16.sp
+                            fontSize = 13.sp, lineHeight = 16.sp
                         )
                         Spacer(Modifier.height(8.dp))
                     }
@@ -443,39 +446,37 @@ private fun WebImportScreen(
                             if (changes.isEmpty()) {
                                 Text(
                                     "和现在的课表一样，没有调课。",
-                                    color = pal.ink2, fontSize = 12.5.sp
+                                    color = pal.ink2, fontSize = 13.sp
                                 )
                             } else {
                                 Text(
                                     "教务系统上的课表变了：${Diff.summarize(changes)}",
-                                    color = pal.signal, fontSize = 12.5.sp,
+                                    color = pal.signal, fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 changes.take(8).forEach { c ->
                                     Text(
                                         "【${Diff.label(c.kind)}】${c.title}",
-                                        color = pal.ink, fontSize = 12.sp,
+                                        color = pal.ink, fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold, maxLines = 1
                                     )
                                     if (c.before.isNotBlank()) {
                                         Text(
                                             "  原：${c.before}",
-                                            color = pal.faint, fontSize = 11.sp,
-                                            fontFamily = FontFamily.Monospace, maxLines = 1
+                                            color = pal.faint, fontSize = Fs.caption, maxLines = 1
                                         )
                                     }
                                     if (c.after.isNotBlank()) {
                                         Text(
                                             "  现：${c.after}",
-                                            color = pal.ink2, fontSize = 11.sp,
-                                            fontFamily = FontFamily.Monospace, maxLines = 1
+                                            color = pal.ink2, fontSize = Fs.caption, maxLines = 1
                                         )
                                     }
                                     Spacer(Modifier.height(4.dp))
                                 }
                                 if (changes.size > 8) {
-                                    Text("…… 还有 ${changes.size - 8} 处", color = pal.faint, fontSize = 11.sp)
+                                    Text("…… 还有 ${changes.size - 8} 处", color = pal.faint, fontSize = Fs.caption)
                                 }
                             }
                         } else {
@@ -485,12 +486,11 @@ private fun WebImportScreen(
                                         periodRange(b.startPeriod, b.endPeriod, effPeriods) +
                                         "  ${b.title}" +
                                         (if (b.location.isNotBlank()) "  ${b.location}" else ""),
-                                    color = pal.ink2, fontSize = 11.5.sp,
-                                    fontFamily = FontFamily.Monospace, maxLines = 1
+                                    color = pal.ink2, fontSize = 13.sp, maxLines = 1
                                 )
                             }
                             if (bs.size > 6) {
-                                Text("…… 还有 ${bs.size - 6} 个", color = pal.faint, fontSize = 11.sp)
+                                Text("…… 还有 ${bs.size - 6} 个", color = pal.faint, fontSize = Fs.caption)
                             }
                         }
                         Spacer(Modifier.height(8.dp))
@@ -520,7 +520,7 @@ private fun WebImportScreen(
                                 changes.isEmpty() -> "没有变动，仍然覆盖"
                                 else -> "应用这 ${changes.size} 处变动"
                             }
-                            PrimaryButton(pal, applyLabel) {
+                            PrimaryButton(pal, applyLabel, modifier = Modifier.weight(1f)) {
                                 scope.launch {
                                     runCatching {
                                         Store.importZf(
@@ -552,10 +552,14 @@ private fun WebImportScreen(
                             }
                             Spacer(Modifier.width(8.dp))
                         }
-                        PrimaryButton(pal, "抓取本页课表") { capture() }
-                        Spacer(Modifier.width(8.dp))
-                        OutlineChip(pal, "保存 HTML", enabled = captured != null) {
-                            saver.launch("jwxt-page.html")
+                        // 已经有结果时"抓取"退成次按钮，主按钮只留一个
+                        if (blocks != null && !imported) {
+                            OutlineChip(pal, "重新抓取") { capture() }
+                        } else {
+                            PrimaryButton(pal, "抓取本页课表", modifier = Modifier.weight(1f)) { capture() }
+                        }
+                        if (captured != null) {
+                            TextBtn(pal, "保存 HTML", color = pal.muted) { saver.launch("jwxt-page.html") }
                         }
                     }
                     Spacer(Modifier.height(6.dp))

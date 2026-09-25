@@ -23,7 +23,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -117,25 +116,27 @@ fun UpdateSheet(
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = url, onValueChange = { url = it },
-                placeholder = { Text("xxx.pages.dev", fontSize = 12.sp) },
-                singleLine = true, modifier = Modifier.fillMaxWidth()
+                placeholder = { Text("xxx.pages.dev") },
+                singleLine = true, shape = FieldShape, modifier = Modifier.fillMaxWidth()
             )
             if (url.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "实际会请求：" + Updater.manifestUrl(url),
-                    color = pal.faint, fontSize = 10.sp, fontFamily = FontFamily.Monospace
+                    color = pal.faint, fontSize = Fs.micro
                 )
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(Dim.m))
+            PrimaryButton(
+                pal, if (busy) "请稍等…" else "保存并检查", enabled = !busy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                onApply(tt.copy(updateUrl = url.trim()))
+                check()
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                PrimaryButton(pal, if (busy) "请稍等…" else "保存并检查", enabled = !busy) {
-                    onApply(tt.copy(updateUrl = url.trim()))
-                    check()
-                }
                 if (url.trim() != DEFAULT_UPDATE_URL) {
-                    Spacer(Modifier.width(8.dp))
-                    OutlineChip(pal, "恢复默认") {
+                    TextBtn(pal, "恢复默认", color = pal.muted) {
                         url = DEFAULT_UPDATE_URL
                         onApply(tt.copy(updateUrl = DEFAULT_UPDATE_URL))
                         latest = null
@@ -143,8 +144,7 @@ fun UpdateSheet(
                     }
                 }
                 if (tt.updateUrl.isNotBlank()) {
-                    Spacer(Modifier.width(8.dp))
-                    OutlineChip(pal, "关掉检查") {
+                    TextBtn(pal, "关掉检查", color = pal.muted) {
                         url = ""
                         onApply(tt.copy(updateUrl = ""))
                         latest = null
@@ -159,20 +159,20 @@ fun UpdateSheet(
                 Label(pal, "有新版")
                 Box(
                     Modifier.fillMaxWidth()
-                        .background(pal.signal.copy(alpha = 0.08f), RoundedCornerShape(2.dp))
-                        .padding(11.dp)
+                        .background(pal.panel2, RoundedCornerShape(Dim.rCard))
+                        .padding(Dim.l)
                 ) {
                     Column {
                         Text(
                             "v${m.versionName.ifBlank { m.versionCode.toString() }}" +
                                 // 整除会把 10.9 MB 显示成 10 MB，看着像少了一截
                                 if (m.size > 0) "   %.1f MB".format(m.size / 1048576.0) else "",
-                            color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                            fontFamily = FontFamily.Monospace
+                            color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                            style = NumStyle
                         )
                         if (m.notes.isNotBlank()) {
-                            Spacer(Modifier.height(5.dp))
-                            Text(m.notes, color = pal.ink2, fontSize = 12.sp, lineHeight = 17.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Text(m.notes, color = pal.ink2, fontSize = 13.sp, lineHeight = 19.sp)
                         }
                     }
                 }
@@ -180,28 +180,32 @@ fun UpdateSheet(
 
                 if (progress >= 0f) {
                     Box(
-                        Modifier.fillMaxWidth().height(5.dp)
+                        Modifier.fillMaxWidth().height(6.dp)
                             .background(pal.panel2, RoundedCornerShape(3.dp))
                     ) {
                         Box(
-                            Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(5.dp)
-                                .background(pal.signal, RoundedCornerShape(3.dp))
+                            Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(6.dp)
+                                .background(pal.ink, RoundedCornerShape(3.dp))
                         )
                     }
                     Spacer(Modifier.height(6.dp))
                     Text(
                         "下载中 ${(progress * 100).toInt()}%",
-                        color = pal.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace
+                        color = pal.muted, fontSize = Fs.caption, style = NumStyle
                     )
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val ready = apk
                         if (ready != null && ready.exists()) {
-                            PrimaryButton(pal, "安装", enabled = !busy) { Updater.install(ctx, ready) }
+                            PrimaryButton(pal, "安装", enabled = !busy, modifier = Modifier.weight(1f)) {
+                                Updater.install(ctx, ready)
+                            }
                             Spacer(Modifier.width(8.dp))
                             OutlineChip(pal, "重新下载", !busy) { download(m) }
                         } else {
-                            PrimaryButton(pal, "下载并安装", enabled = !busy) { download(m) }
+                            PrimaryButton(pal, "下载并安装", enabled = !busy, modifier = Modifier.weight(1f)) {
+                                download(m)
+                            }
                         }
                         if (!Updater.canInstall(ctx)) {
                             Spacer(Modifier.width(8.dp))
@@ -252,26 +256,30 @@ fun UpdatePrompt(
     onLater: () -> Unit,
     onUpdate: () -> Unit
 ) {
-    Sheet(pal, "有新版本", onLater) {
+    Sheet(
+        pal, "有新版本", onLater,
+        footer = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlineChip(pal, "稍后", modifier = Modifier.weight(1f).height(Dim.touch), onClick = onLater)
+                Spacer(Modifier.width(Dim.s))
+                PrimaryButton(pal, "立即更新", modifier = Modifier.weight(1f), onClick = onUpdate)
+            }
+        }
+    ) {
         Column {
             Text(
-                "v${m.versionName.ifBlank { m.versionCode.toString() }}" +
-                    if (m.size > 0) "   %.1f MB".format(m.size / 1048576.0) else "",
-                color = pal.ink, fontSize = 20.sp, fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
+                "v${m.versionName.ifBlank { m.versionCode.toString() }}",
+                color = pal.ink, fontSize = Fs.display, fontWeight = FontWeight.Bold, style = NumStyle
             )
+            if (m.size > 0) {
+                Text("%.1f MB".format(m.size / 1048576.0), color = pal.muted, fontSize = 13.sp, style = NumStyle)
+            }
             if (m.notes.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
-                Text(m.notes, color = pal.ink2, fontSize = 13.sp, lineHeight = 19.sp)
+                Spacer(Modifier.height(Dim.m))
+                Text(m.notes, color = pal.ink2, fontSize = Fs.body, lineHeight = 21.sp)
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(Dim.m))
             Hint(pal, "覆盖安装，课表和设置都不会丢。")
-            Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                PrimaryButton(pal, "立即更新", onClick = onUpdate)
-                Spacer(Modifier.width(8.dp))
-                OutlineChip(pal, "稍后", onClick = onLater)
-            }
         }
     }
 }

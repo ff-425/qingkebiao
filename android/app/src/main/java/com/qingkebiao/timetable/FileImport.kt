@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,7 +20,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -165,40 +165,87 @@ fun FileImportDialog(
         )
     }
 
-    Sheet(pal, "从文件导入", onClose) {
+    fun doImport(r: FileImport.Result) {
+        scope.launch {
+            runCatching {
+                Store.importZf(
+                    ctx, r.blocks,
+                    currentWeek = if (askWeek) currentWeek else null,
+                    parser = r.kind
+                )
+            }.fold(
+                onSuccess = {
+                    done = true; err = false
+                    onImported(it)
+                    msg = "已导入 ${it.sessions.size} 节课。时间不对就到设置里改「作息时间」。"
+                },
+                onFailure = { e -> err = true; msg = "导入失败：${e.message}" }
+            )
+        }
+    }
+
+    Sheet(
+        pal, "从文件导入", onClose,
+        footer = {
+            val r = result
+            when {
+                done -> PrimaryButton(pal, "完成", modifier = Modifier.fillMaxWidth(), onClick = onClose)
+                r != null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlineChip(pal, "取消", modifier = Modifier.weight(1f).height(Dim.touch), onClick = onClose)
+                    Spacer(Modifier.width(Dim.s))
+                    PrimaryButton(pal, "导入 ${r.blocks.size} 个课程块", modifier = Modifier.weight(2f)) {
+                        doImport(r)
+                    }
+                }
+            }
+        }
+    ) {
         Column {
             Hint(
                 pal,
                 "表格里要有「星期一…星期五」这样的表头，每一格写课程名，" +
                     "地点、老师、周次各占一行。合并单元格会自动展开。"
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(Dim.m))
 
             msg?.let { MsgBox(pal, it, err) }
 
             result?.takeIf { !done }?.let { r ->
-                Spacer(Modifier.height(12.dp))
-                Label(pal, "预览（确认对了再导入）")
+                Spacer(Modifier.height(20.dp))
+                Label(pal, "预览 · 确认对了再导入")
                 val dow = "一二三四五六日"
                 // OCR 来的必须全部列出来让人核对；Excel 可靠，列几条示意即可
                 val showAll = r.kind == "image" || r.kind == "pdf"
                 val shown = if (showAll) 40 else 8
-                r.blocks.sortedWith(compareBy({ it.weekday }, { it.startPeriod })).take(shown).forEach { b ->
-                    Text(
-                        "周${dow.getOrElse(b.weekday - 1) { '?' }} ${b.startPeriod}-${b.endPeriod}节  " +
-                            "${b.title}" +
-                            (if (b.location.isNotBlank()) "  ${b.location}" else "") +
-                            (if (b.teacher.isNotBlank()) "  ${b.teacher}" else "") +
-                            "  ${b.weeksRaw}",
-                        color = pal.ink2, fontSize = 11.5.sp,
-                        fontFamily = FontFamily.Monospace, maxLines = 2
-                    )
-                }
-                if (r.blocks.size > shown) {
-                    Text("…… 还有 ${r.blocks.size - shown} 个", color = pal.faint, fontSize = 11.sp)
+                Card(pal, color = pal.panel2) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        r.blocks.sortedWith(compareBy({ it.weekday }, { it.startPeriod })).take(shown).forEach { b ->
+                            Row(Modifier.padding(vertical = 5.dp)) {
+                                Text(
+                                    "周${dow.getOrElse(b.weekday - 1) { '?' }} ${b.startPeriod}-${b.endPeriod}节",
+                                    color = pal.muted, fontSize = Fs.caption, style = NumStyle,
+                                    modifier = Modifier.width(80.dp)
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text(b.title, color = pal.ink, fontSize = 13.sp, maxLines = 1)
+                                    Text(
+                                        listOf(b.location, b.teacher, b.weeksRaw)
+                                            .filter { it.isNotBlank() }.joinToString(" · "),
+                                        color = pal.muted, fontSize = Fs.caption, maxLines = 2
+                                    )
+                                }
+                            }
+                        }
+                        if (r.blocks.size > shown) {
+                            Text(
+                                "…… 还有 ${r.blocks.size - shown} 个", color = pal.faint, fontSize = Fs.caption,
+                                modifier = Modifier.padding(vertical = 5.dp)
+                            )
+                        }
+                    }
                 }
 
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(Dim.m))
                 if (askWeek) {
                     FieldRow(pal, "今天是第几周", "表格里只有周次，靠这个反推开学日期") {
                         IntStepper(pal, currentWeek, 1, Zf.maxWeek(r.blocks).coerceAtLeast(1), suffix = " 周") {
@@ -210,37 +257,8 @@ fun FileImportDialog(
                         OutlineChip(pal, "改一下") { askWeek = true }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(Dim.xs))
                 Hint(pal, "时间按设置里的作息表换算，第 1 节 ${periods.firstOrNull()?.startMin?.hhmm() ?: "—"} 起。")
-
-                Spacer(Modifier.height(14.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PrimaryButton(pal, "导入这 ${r.blocks.size} 个课程块") {
-                        scope.launch {
-                            runCatching {
-                                Store.importZf(
-                                    ctx, r.blocks,
-                                    currentWeek = if (askWeek) currentWeek else null,
-                                    parser = r.kind
-                                )
-                            }.fold(
-                                onSuccess = {
-                                    done = true; err = false
-                                    onImported(it)
-                                    msg = "已导入 ${it.sessions.size} 节课。时间不对就到设置里改「节次时间」。"
-                                },
-                                onFailure = { e -> err = true; msg = "导入失败：${e.message}" }
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    OutlineChip(pal, "取消", onClick = onClose)
-                }
-            }
-
-            if (done) {
-                Spacer(Modifier.height(14.dp))
-                PrimaryButton(pal, "完成", onClick = onClose)
             }
         }
     }
