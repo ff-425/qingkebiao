@@ -34,3 +34,6 @@ android/qingkebiao-release.jks
 *签名备份*
 android/build-release-*.apk
 android/lineage.bin
+
+# apksigner 顺手生成的 v4 签名文件，构建产物，不进仓库
+*.idsig
