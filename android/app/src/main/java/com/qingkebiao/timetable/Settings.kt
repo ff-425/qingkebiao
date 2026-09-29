@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -99,7 +100,8 @@ internal fun SettingsPage(
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var page by remember { mutableStateOf(initialPage) }
+    // 设置里停在哪个子页面，切后台再回来也还在那儿
+    var page by rememberSaveable { mutableStateOf(initialPage) }
 
     // 历史学期列表。切换、改名、删除之后 termsTick++ 重读一遍
     var termsTick by remember { mutableIntStateOf(0) }

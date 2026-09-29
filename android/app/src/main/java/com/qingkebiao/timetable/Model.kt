@@ -1,5 +1,6 @@
 package com.qingkebiao.timetable
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.time.DayOfWeek
 import java.time.Instant
@@ -101,8 +102,14 @@ data class Timetable(
     val updateUrl: String = DEFAULT_UPDATE_URL,
     /** 上次和教务系统对过课表的日期。用来提醒"好久没查调课了"。 */
     val lastSyncEpochDay: Long? = null,
-    /** 隔几天提醒一次去查调课。0 = 不提醒。 */
-    val syncRemindDays: Int = 7,
+    /**
+     * 隔几天提醒一次去查调课。0 = 不提醒，默认就是 0。
+     * 以前默认 7 天，没对过课表的人首页顶上一直挂着"还没和教务系统对过课表"——
+     * 调课没那么频繁，不该天天催。换了个存储名字，老数据里存着的那个 7
+     * 读进来会被忽略，所有人一升级就是关的；想要的到设置 → 同步里再开。
+     */
+    @SerialName("syncNagDays")
+    val syncRemindDays: Int = 0,
     /** 点过"稍后"的那个版本号，和点的那一天。同一版本一天只主动弹一次。 */
     val updateSnoozeCode: Int = 0,
     val updateSnoozeDay: Long = 0,

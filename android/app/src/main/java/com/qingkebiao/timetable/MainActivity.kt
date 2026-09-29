@@ -75,6 +75,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -168,15 +169,18 @@ private fun Home(pal: Palette, resumeTick: Int) {
     val density = LocalDensity.current
 
     var tt by remember { mutableStateOf(Timetable()) }
-    var view by remember { mutableStateOf(ViewMode.Day) }
-    var weekIdx by remember { mutableIntStateOf(1) }
-    var dayDate by remember { mutableStateOf(LocalDate.now()) }
+    // 看到哪一页、开着哪个页面都用 rememberSaveable：切后台再回来停在原处；
+    // 就算后台时进程被系统杀了（小米很常见），从最近任务回来也能恢复到原来那页。
+    // 只有真正退出（划掉）再打开，才是从今天开始。
+    var view by rememberSaveable { mutableStateOf(ViewMode.Day) }
+    var weekIdx by rememberSaveable { mutableIntStateOf(1) }
+    var dayDate by rememberSaveable { mutableStateOf(LocalDate.now()) }
     var hourDp by remember { mutableStateOf(64.dp) }
     var showImport by remember { mutableStateOf(false) }
     /** 打开导入框时默认选"作为新学期"（从设置 → 学期里点进来的） */
     var importAsNew by remember { mutableStateOf(false) }
-    var showSettings by remember { mutableStateOf(false) }
-    var settingsPage by remember { mutableStateOf(SPage.Root) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    var settingsPage by rememberSaveable { mutableStateOf(SPage.Root) }
     var endedDismissed by remember { mutableStateOf(false) }
     var detail by remember { mutableStateOf<Session?>(null) }
     var editorFor by remember { mutableStateOf<Session?>(null) }
@@ -214,6 +218,15 @@ private fun Home(pal: Palette, resumeTick: Int) {
         )
     }
 
+    /** 课表已经从文件读进来了。读进来之前 tt 是个空壳，下面几个"跟着课表变"的逻辑都要等它 */
+    var loaded by remember { mutableStateOf(false) }
+    /** 这一次打开（不是切后台回来）是否已经落到过今天。进程被杀后恢复时它也会恢复成 true */
+    var initialized by rememberSaveable { mutableStateOf(false) }
+    /** 要不要跳回今天 / 本周。在下一帧用新的课表算，所以是个标记而不是直接跳 */
+    var needAnchor by remember { mutableStateOf(false) }
+    /** 上次在前台时是哪天，用来判断切回来时是不是已经跨天了 */
+    var lastSeenDay by rememberSaveable { mutableLongStateOf(LocalDate.now().toEpochDay()) }
+
     // 首次打开先装示例，让人立刻看见这东西长什么样（不落盘，导入真课表即覆盖）
     LaunchedEffect(Unit) {
         val stored = Store.load(ctx)
@@ -226,12 +239,8 @@ private fun Home(pal: Palette, resumeTick: Int) {
             sourceLabel = "示例课表",
             showWeekend = false
         )
-    }
-
-    LaunchedEffect(tt.sessions.size, tt.termStartEpochDay, tt.termWeeks) {
-        if (tt.sessions.isNotEmpty()) {
-            weekIdx = d.clampWeek(d.weekOf(LocalDate.now()))
-        }
+        if (!initialized) { needAnchor = true; initialized = true }
+        loaded = true
     }
 
     /** 学期里第一节 / 最后一节课那天。翻页翻出学期范围时落到这里。 */
@@ -250,13 +259,57 @@ private fun Home(pal: Palette, resumeTick: Int) {
         return if (d.weeks > 0 && d.weekOf(today) > d.weeks) lastDay() else today
     }
 
-    // 每次回到前台都归位到今天 / 本周，不保留上次翻到哪儿了；
-    // 切换学期、导入新学期之后同理
-    LaunchedEffect(resumeTick, tt.termId, tt.sessions.isEmpty()) {
+    // 跳回今天 / 本周。只在这几种时候：刚打开 App、换了一份课表（换学期、导入、清空、恢复备份）、
+    // 跨天回来而离开时看的正是"今天"。切后台再回来不动 —— 从哪页走的就回到哪页。
+    // 看的是日视图还是周视图保持原样。
+    LaunchedEffect(needAnchor, d) {
+        if (!needAnchor) return@LaunchedEffect
         val day = anchorDay()
-        view = ViewMode.Day
         dayDate = day
         weekIdx = d.clampWeek(d.weekOf(day))
+        needAnchor = false
+    }
+
+    // 换了一份课表：学期 id 变了，或者从有课变成没课、没课变成有课
+    var shownTerm by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(loaded, tt.termId, tt.sessions.isEmpty()) {
+        if (!loaded) return@LaunchedEffect
+        val id = "${tt.termId}|${tt.sessions.isEmpty()}"
+        if (shownTerm != null && shownTerm != id) needAnchor = true
+        shownTerm = id
+    }
+
+    // 在设置里改了开学日期或总周数，周次的编号整个变了，原来的"第几周"已经不是那一周
+    var termShape by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(loaded, tt.termStartEpochDay, tt.termWeeks) {
+        if (!loaded) return@LaunchedEffect
+        val shape = "${tt.termStartEpochDay}|${tt.termWeeks}"
+        if (termShape != null && termShape != shape) needAnchor = true
+        termShape = shape
+    }
+
+    // 切回前台
+    LaunchedEffect(resumeTick) {
+        if (!loaded) return@LaunchedEffect
+        // 查调课、教务系统导入是另外的页面，它们直接改存着的课表。以前回来不重读，
+        // 首页一直显示旧的；这时再在设置里改任何一项，会把旧课表存回去，
+        // 刚同步下来的就被盖掉了。
+        val stored = Store.load(ctx)
+        if ((stored.sessions.isNotEmpty() || stored.termId.isNotBlank()) && stored != tt) {
+            tt = stored
+            refreshWidgets(ctx)
+            Reminders.reschedule(ctx, stored)
+        }
+        // 跨天了：离开时看的是"今天 / 本周"就跟到新的今天，翻到别处的不动
+        val today = LocalDate.now()
+        val last = LocalDate.ofEpochDay(lastSeenDay)
+        if (today != last) {
+            val wasOnToday =
+                if (view == ViewMode.Day) dayDate == last
+                else weekIdx == d.clampWeek(d.weekOf(last))
+            if (wasOnToday) needAnchor = true
+            lastSeenDay = today.toEpochDay()
+        }
     }
 
     // "进行中""还有几分钟"这些要自己走，半分钟一拍足够
@@ -270,6 +323,7 @@ private fun Home(pal: Palette, resumeTick: Int) {
     /** 整份课表换掉（切学期、导入完成）。数据已经在盘上了，这里只刷新界面、小组件和提醒。 */
     fun replaceActive(next: Timetable) {
         tt = next
+        needAnchor = true
         endedDismissed = false
         scope.launch {
             refreshWidgets(ctx)

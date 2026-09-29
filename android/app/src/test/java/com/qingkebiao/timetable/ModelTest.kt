@@ -224,3 +224,20 @@ class IcsTest {
         assertEquals(14, d1.toEpochDay() - d0.toEpochDay())
     }
 }
+
+class SyncNagTest {
+
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    /** 老版本默认每 7 天催一次查调课，存进文件里就是个 7。升级后要当成"不提醒" */
+    @Test fun `老数据里的每7天提醒升级后是关的`() {
+        val old = """{"sessions":[],"syncRemindDays":7}"""
+        assertEquals(0, json.decodeFromString<Timetable>(old).syncRemindDays)
+    }
+
+    @Test fun `升级后自己打开的提醒能存住`() {
+        val t = Timetable(syncRemindDays = 5)
+        val back = json.decodeFromString<Timetable>(json.encodeToString(Timetable.serializer(), t))
+        assertEquals(5, back.syncRemindDays)
+    }
+}
