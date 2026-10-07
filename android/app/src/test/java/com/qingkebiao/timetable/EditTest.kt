@@ -114,23 +114,53 @@ class EditTest {
         assertEquals(tt, Store.backfillOrigins(tt))
     }
 
-    @Test fun `同一种安排在各周的那几节`() {
+    @Test fun `每一周都能找到这门课同一天的那一节`() {
         val tt = fresh()
         val d = Derived(tt, ZoneId.of("Asia/Shanghai"))
         val one = tt.on(start.plusWeeks(5), "高等数学").single()
-        val sib = d.siblingsOf(one)
-        assertEquals(16, sib.size)
-        assertTrue(sib.all { it.title == "高等数学" && it.startMinute() == one.startMinute() })
-        assertFalse(sib.any { it.title == "大学英语" })
+        val cp = d.weeklyCounterparts(one)
+        assertEquals((1..16).toSet(), cp.keys)
+        assertTrue(cp.values.all { it != null && it.title == "高等数学" })
+        assertEquals(one, cp[6])
     }
 
-    @Test fun `改过一周的时间后它就不再算同一种安排`() {
+    /**
+     * 用户的实际用法：先只改了第 6 周的时间，再点开第 6 周这节，想把同样的设置用到别的周。
+     * 以前按"时间地点完全一样"找同类，改过的那节和别的周已经不一样了，一个都找不到。
+     */
+    @Test fun `单独改过一周之后还能从它应用到别的周`() {
         val tt = fresh()
         val mon6 = start.plusWeeks(5)
         val one = tt.on(mon6, "高等数学").single()
         val moved = one.copy(start = one.start + 30 * 60_000, end = one.end + 30 * 60_000, manual = true)
         val d = Derived(tt.copy(sessions = tt.sessions.map { if (it.id == one.id) moved else it }), ZoneId.of("Asia/Shanghai"))
-        assertEquals(15, d.siblingsOf(tt.on(mon6.plusWeeks(1), "高等数学").single()).size)
-        assertEquals(1, d.siblingsOf(moved).size)
+        val cp = d.weeklyCounterparts(moved)
+        assertEquals(16, cp.values.count { it != null })
+        assertEquals(tt.on(mon6.plusWeeks(1), "高等数学").single().id, cp[7]!!.id)
+    }
+
+    @Test fun `那一周那天没这门课就是空的`() {
+        val b = listOf(block("线性代数", 2, 1, 2, 1..8))
+        val tt = Timetable(
+            sessions = Zf.toSessions(b, start, DEFAULT_PERIODS), termStartEpochDay = start.toEpochDay(),
+            termWeeks = 16, zfBlocks = b, periods = DEFAULT_PERIODS
+        )
+        val d = Derived(tt, ZoneId.of("Asia/Shanghai"))
+        val cp = d.weeklyCounterparts(tt.sessions.first())
+        assertEquals((1..8).toSet(), cp.filterValues { it != null }.keys)
+        assertEquals(null, cp[9])
+    }
+
+    @Test fun `同一天两节同名的取时间最近的`() {
+        val b = listOf(block("体育", 3, 1, 2), block("体育", 3, 7, 8))
+        val tt = Timetable(
+            sessions = Zf.toSessions(b, start, DEFAULT_PERIODS), termStartEpochDay = start.toEpochDay(),
+            zfBlocks = b, periods = DEFAULT_PERIODS
+        )
+        val d = Derived(tt, ZoneId.of("Asia/Shanghai"))
+        val wed3 = start.plusWeeks(2).plusDays(2)
+        val afternoon = tt.on(wed3, "体育").maxByOrNull { it.start }!!
+        val cp = d.weeklyCounterparts(afternoon)
+        assertEquals(afternoon.startMinute(), cp[4]!!.startMinute())
     }
 }

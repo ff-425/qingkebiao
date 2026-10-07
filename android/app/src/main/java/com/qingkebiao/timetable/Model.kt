@@ -357,19 +357,24 @@ class Derived(val tt: Timetable, val zone: ZoneId = ZoneId.systemDefault()) {
      * 按"星期 + 时段 + 地点 + 教师"分组，这四项一样才算同一种安排。
      */
     /**
-     * 和这一节属于同一种安排的所有场次（同名、同星期、同时段、同地点、同教师），按时间排。
-     * 编辑时"应用到哪几周"就在这里面选。按存着的原始课找，不看调休 ——
-     * 调休搬过来的那节改的也是它原本那天。
+     * 每一周里"这门课在同一天的那一节"：同名、同一个星期几；那天有好几节同名的，取开始时间最接近的。
+     * 那一周那天没有这门课就是 null。
+     *
+     * 编辑时"应用到哪几周"按这个对应。不要求时间、地点都一样 —— 之前单独改过时间的那几周，
+     * 也得能一起改成一样的（只按"完全相同的安排"去找的话，改过一次的那节就再也找不到别的周了）。
+     * 按存着的原始课找，不看调休。
      */
-    fun siblingsOf(s: Session): List<Session> {
-        val wd = s.start.toLocalDate(zone).dayOfWeek.value
+    fun weeklyCounterparts(s: Session): Map<Int, Session?> {
+        if (weeks <= 0) return emptyMap()
+        val day0 = s.start.toLocalDate(zone)
+        val w0 = weekOf(day0)
         val sm = s.startMinute(zone)
-        val em = s.endMinute(zone)
-        return tt.sessions.filter {
-            it.title == s.title && it.location == s.location && it.teacher == s.teacher &&
-                it.startMinute(zone) == sm && it.endMinute(zone) == em &&
-                it.start.toLocalDate(zone).dayOfWeek.value == wd
-        }.sortedBy { it.start }
+        return (1..weeks).associateWith { w ->
+            if (w == w0) s
+            else rawOn(day0.plusWeeks((w - w0).toLong()))
+                .filter { it.title == s.title && !it.allDay }
+                .minByOrNull { kotlin.math.abs(it.startMinute(zone) - sm) }
+        }
     }
 
     fun arrangementsOf(title: String): List<Arrangement> =

@@ -70,11 +70,19 @@ fun SessionEditorDialog(
     var repeatCount by remember { mutableIntStateOf(1) }
     var confirmDelete by remember { mutableStateOf(false) }
 
-    // 同一种安排在各周的那几节（包括这一节自己）。只有一节的话就不显示"应用到"
-    val siblings = remember(existing) { existing?.let { d.siblingsOf(it) }.orEmpty() }
-    var scope by remember { mutableStateOf(setOfNotNull(existing?.id)) }
-    val targets: List<Session> = if (existing == null) emptyList() else
-        (siblings.filter { it.id in scope } + existing).distinctBy { it.id }.sortedBy { it.start }
+    // 应用到哪几周：整个学期每一周都能选。每一周对应"这门课在同一天的那一节"，
+    // 不管那几周之前有没有单独改过；那一周那天没这门课的，选上就新加一节。
+    val baseWeek = existing?.let { d.weekOf(it.start.toLocalDate()) } ?: 0
+    val counterparts: Map<Int, Session?> =
+        remember(existing) { existing?.let { d.weeklyCounterparts(it) }.orEmpty() }
+    val canScope = existing != null && d.weeks > 1 && baseWeek in 1..d.weeks
+    var picked by remember { mutableStateOf(setOf(baseWeek)) }
+    val chosen = (picked + baseWeek).filter { it in counterparts || it == baseWeek }.sorted()
+    /** 选中的周里已经有这节课、会被改掉的 */
+    val targets: List<Session> = if (existing == null) emptyList()
+        else chosen.mapNotNull { if (it == baseWeek) existing else counterparts[it] }
+    /** 选中的周里原本没有这节课、要新加的 */
+    val addWeeks: List<Int> = chosen.filter { it != baseWeek && counterparts[it] == null }
 
     // 结束时间永远在开始之后，改开始就把结束跟着推
     fun setStart(m: Int) {
@@ -91,7 +99,8 @@ fun SessionEditorDialog(
             // 选中的每一周都按同一种方式改：日期挪了几天，其他周也挪几天；时间、地点这些直接换成新的。
             // origin 留着 —— 那边靠它记住"这节导入的课用户改过了"，重算课表时不再生成原样的一份
             val shift = date.toEpochDay() - existing.start.toLocalDate().toEpochDay()
-            onSave(targets.map { sib ->
+            val baseDay = existing.start.toLocalDate()
+            val changed = targets.map { sib ->
                 val dt = sib.start.toLocalDate().plusDays(shift)
                 sib.copy(
                     title = title.trim(),
@@ -102,7 +111,21 @@ fun SessionEditorDialog(
                     end = dt.atMinuteOfDay(maxOf(endMin, startMin + 5)),
                     manual = true
                 )
-            })
+            }
+            val added = addWeeks.map { w ->
+                val dt = baseDay.plusWeeks((w - baseWeek).toLong()).plusDays(shift)
+                Session(
+                    id = newId(),
+                    title = title.trim(),
+                    location = location.trim(),
+                    teacher = teacher.trim(),
+                    note = note.trim(),
+                    start = dt.atMinuteOfDay(startMin),
+                    end = dt.atMinuteOfDay(maxOf(endMin, startMin + 5)),
+                    manual = true
+                )
+            }
+            onSave(changed + added)
             return
         }
         val list = (0 until repeatCount).map { i ->
@@ -121,7 +144,7 @@ fun SessionEditorDialog(
         onSave(list)
     }
 
-    val n = targets.size
+    val n = targets.size + addWeeks.size
     val header = when {
         editing -> "编辑"
         template != null -> "复制「${template.title}」"
@@ -134,7 +157,7 @@ fun SessionEditorDialog(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (editing) {
                     if (confirmDelete) {
-                        DangerChip(pal, if (n > 1) "确认删除 $n 节" else "确认删除", modifier = Modifier.height(Dim.touch)) {
+                        DangerChip(pal, if (targets.size > 1) "确认删除 ${targets.size} 节" else "确认删除", modifier = Modifier.height(Dim.touch)) {
                             onDelete(targets.map { it.id }.toSet())
                         }
                     } else {
@@ -222,47 +245,52 @@ fun SessionEditorDialog(
             Spacer(Modifier.height(6.dp))
             Hint(pal, "连上两节：先点前一节，再把「结束」往后调到位。")
 
-            if (existing != null && siblings.size > 1) {
+            if (existing != null && canScope) {
                 Spacer(Modifier.height(20.dp))
                 Label(pal, "应用到")
                 Card(pal, color = pal.panel2) {
                     Column(Modifier.padding(horizontal = Dim.l, vertical = Dim.m)) {
-                        val later = siblings.filter { it.start >= existing.start }.map { it.id }.toSet()
-                        val all = siblings.map { it.id }.toSet()
+                        val having = counterparts.filterValues { it != null }.keys
+                        val later = having.filter { it >= baseWeek }.toSet()
                         ChoiceChips(
                             pal,
-                            listOf("只改这一节", "这一节及以后", "全部 ${siblings.size} 周"),
-                            when (scope) {
-                                setOf(existing.id) -> 0
+                            listOf("只改这一节", "这周及以后", "有这节课的所有周"),
+                            when (chosen.toSet()) {
+                                setOf(baseWeek) -> 0
                                 later -> 1
-                                all -> 2
+                                having -> 2
                                 else -> -1
                             }
                         ) { i ->
-                            scope = when (i) {
-                                0 -> setOf(existing.id)
+                            picked = when (i) {
+                                0 -> setOf(baseWeek)
                                 1 -> later
-                                else -> all
+                                else -> having
                             }
                         }
                         Spacer(Modifier.height(Dim.m))
-                        Hint(pal, "也可以一周一周点选（这一节本身总在里面）：")
+                        Hint(pal, "或者自己点选要一起改的周。浅色的周那天原本没有这节课，选上会新加一节：")
                         Spacer(Modifier.height(Dim.s))
+                        val weekList = (1..d.weeks).toList()
                         ToggleChips(
                             pal,
-                            siblings.map { s ->
-                                val sd = s.start.toLocalDate()
-                                if (d.weeks > 0) "第${d.weekOf(sd)}周" else "${sd.monthValue}/${sd.dayOfMonth}"
-                            },
-                            siblings.indices.filter { siblings[it].id in scope }.toSet()
+                            weekList.map { "第${it}周" },
+                            weekList.indices.filter { weekList[it] in chosen }.toSet(),
+                            faint = weekList.indices.filter { counterparts[weekList[it]] == null }.toSet()
                         ) { i ->
-                            val id = siblings[i].id
-                            if (id != existing.id) scope = if (id in scope) scope - id else scope + id
+                            val w = weekList[i]
+                            if (w != baseWeek) picked = if (w in picked) picked - w else picked + w
                         }
                         Spacer(Modifier.height(Dim.s))
                         Text(
-                            if (n > 1) "会改 $n 节。日期往后挪了几天，其他周也一起挪几天。"
-                            else "只改这一节，其他周不动。",
+                            buildString {
+                                if (targets.size <= 1 && addWeeks.isEmpty()) append("只改这一节，其他周不动。")
+                                else {
+                                    append("会改 ${targets.size} 节")
+                                    if (addWeeks.isNotEmpty()) append("，另外在 ${addWeeks.size} 周新加这节课")
+                                    append("。都按上面填的时间、地点来；日期往后挪了几天，其他周也一起挪几天。")
+                                }
+                            },
                             color = pal.muted, fontSize = Fs.caption
                         )
                     }
@@ -645,9 +673,11 @@ private fun ChoiceChips(pal: Palette, labels: List<String>, selected: Int, onPic
     }
 }
 
-/** 可多选的一组小格子，一行五个。选中的是深底白字。 */
+/** 可多选的一组小格子，一行五个。选中的是深底白字；[faint] 里的没选中时字是浅色的。 */
 @Composable
-private fun ToggleChips(pal: Palette, labels: List<String>, selected: Set<Int>, onToggle: (Int) -> Unit) {
+private fun ToggleChips(
+    pal: Palette, labels: List<String>, selected: Set<Int>, faint: Set<Int> = emptySet(), onToggle: (Int) -> Unit
+) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         labels.chunked(5).forEachIndexed { r, row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -663,7 +693,15 @@ private fun ToggleChips(pal: Palette, labels: List<String>, selected: Set<Int>, 
                             .clickable { onToggle(i) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(label, color = if (on) pal.paper else pal.ink2, fontSize = 12.sp, style = NumStyle, maxLines = 1)
+                        Text(
+                            label,
+                            color = when {
+                                on -> pal.paper
+                                i in faint -> pal.muted.copy(alpha = 0.6f)
+                                else -> pal.ink2
+                            },
+                            fontSize = 12.sp, style = NumStyle, maxLines = 1
+                        )
                     }
                 }
                 repeat(5 - row.size) { Spacer(Modifier.weight(1f)) }
