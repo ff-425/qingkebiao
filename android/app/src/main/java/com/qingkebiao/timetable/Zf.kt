@@ -51,7 +51,13 @@ object Zf {
         val teacher: String,
         val credits: String,
         val classCode: String
-    )
+    ) {
+        /**
+         * 这个课程块第 [week] 周那一节的身份。不含地点和时间：
+         * 学校只换了教室、或者用户改了作息表，还是同一节；换了星期 / 节次就是另一节了。
+         */
+        fun originKey(week: Int): String = "$title|$weekday|$startPeriod-$endPeriod|$classCode#$week"
+    }
 
     private val TD = Regex(
         """<td[^>]*\bid="(\d+)-(\d+)"[^>]*\bclass="td_wrap"[^>]*>(.*?)</td>""",
@@ -219,7 +225,8 @@ object Zf {
                         teacher = b.teacher,
                         note = note,
                         start = date.atMinuteOfDay(ps.startMin),
-                        end = date.atMinuteOfDay(maxOf(pe.endMin, ps.startMin + 5))
+                        end = date.atMinuteOfDay(maxOf(pe.endMin, ps.startMin + 5)),
+                        origin = b.originKey(w)
                     )
                 )
             }

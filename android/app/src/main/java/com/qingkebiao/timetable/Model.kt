@@ -23,7 +23,13 @@ data class Session(
     val end: Long,
     val allDay: Boolean = false,
     /** 手动添加或手动改过的。重新导入课表时这些会被保留，不会被覆盖掉。 */
-    val manual: Boolean = false
+    val manual: Boolean = false,
+    /**
+     * 从教务课表导入的这一节是"哪个课程块的第几周"，见 [Zf.Block.originKey]。
+     * 手动加的为空。id 每次重算都会重新生成，这个不会 —— 用户删掉 / 改掉某一节之后，
+     * 重算课表时靠它认出"这一节用户已经处理过了，别再生成回来"。
+     */
+    val origin: String = ""
 )
 
 fun newId(): String = UUID.randomUUID().toString()
@@ -123,7 +129,13 @@ data class Timetable(
      */
     val termId: String = "",
     /** 学期名，用户可以改。空 = 按开学日期自动起名，见 [autoTermName]。 */
-    val termName: String = ""
+    val termName: String = "",
+    /**
+     * 用户删掉或改过的导入课（存的是 [Session.origin]）。
+     * 改作息时间、改开学日期、查调课都会按课程块把课表整个重新生成一遍，
+     * 以前生成时不看这个：删掉的那节又回来了，改过时间的那节旁边又冒出一节原时间的。
+     */
+    val suppressed: List<String> = emptyList()
 )
 
 /* ---------------------------------------------------------------- 多学期 */
@@ -344,6 +356,22 @@ class Derived(val tt: Timetable, val zone: ZoneId = ZoneId.systemDefault()) {
      * 只列一堆地点、再列一堆时间，是对不上号的 —— 必须成对给出来。
      * 按"星期 + 时段 + 地点 + 教师"分组，这四项一样才算同一种安排。
      */
+    /**
+     * 和这一节属于同一种安排的所有场次（同名、同星期、同时段、同地点、同教师），按时间排。
+     * 编辑时"应用到哪几周"就在这里面选。按存着的原始课找，不看调休 ——
+     * 调休搬过来的那节改的也是它原本那天。
+     */
+    fun siblingsOf(s: Session): List<Session> {
+        val wd = s.start.toLocalDate(zone).dayOfWeek.value
+        val sm = s.startMinute(zone)
+        val em = s.endMinute(zone)
+        return tt.sessions.filter {
+            it.title == s.title && it.location == s.location && it.teacher == s.teacher &&
+                it.startMinute(zone) == sm && it.endMinute(zone) == em &&
+                it.start.toLocalDate(zone).dayOfWeek.value == wd
+        }.sortedBy { it.start }
+    }
+
     fun arrangementsOf(title: String): List<Arrangement> =
         tt.sessions.asSequence()
             .filter { it.title == title && !it.allDay }

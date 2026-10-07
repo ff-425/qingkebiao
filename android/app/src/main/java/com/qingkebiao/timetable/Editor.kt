@@ -1,6 +1,8 @@
 package com.qingkebiao.timetable
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -34,10 +36,14 @@ import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 
 /**
- * 加一节课 / 一个事件，也用于编辑已有的那一节。
+ * 加一节课 / 一个事件，也用于编辑已有的那一节，或者照着某一节复制一份。
  *
  * 存进去的都带 manual = true —— 重新导入学校课表时这些不会被覆盖掉。
- * 编辑只改当前这一次，不动同名课程的其他场次，这样行为可预期。
+ * 编辑默认只改当前这一次；同一种安排（同星期、同时段、同地点）在别的周也有的话，
+ * 可以选"应用到"哪几周，一次改完，不用一周一周点进去改。
+ *
+ * [existing] 必须是存着的原始那一节（不是调休搬过来显示的那份），id 和日期都按它来。
+ * [template] 只在添加时用：复制一节课，名称地点老师时间都先填好，改个日期或时间就行。
  */
 @Composable
 fun SessionEditorDialog(
@@ -47,20 +53,28 @@ fun SessionEditorDialog(
     defaultDate: LocalDate,
     onClose: () -> Unit,
     onSave: (List<Session>) -> Unit,
-    onDelete: (Session) -> Unit
+    onDelete: (Set<String>) -> Unit,
+    template: Session? = null
 ) {
     val editing = existing != null
-    var title by remember { mutableStateOf(existing?.title ?: "") }
-    var location by remember { mutableStateOf(existing?.location ?: "") }
-    var teacher by remember { mutableStateOf(existing?.teacher ?: "") }
-    var note by remember { mutableStateOf(existing?.note ?: "") }
+    val src = existing ?: template
+    var title by remember { mutableStateOf(src?.title ?: "") }
+    var location by remember { mutableStateOf(src?.location ?: "") }
+    var teacher by remember { mutableStateOf(src?.teacher ?: "") }
+    var note by remember { mutableStateOf(src?.note ?: "") }
     var date by remember {
-        mutableStateOf(existing?.start?.toLocalDate() ?: defaultDate)
+        mutableStateOf(src?.start?.toLocalDate() ?: defaultDate)
     }
-    var startMin by remember { mutableIntStateOf(existing?.startMinute() ?: (8 * 60)) }
-    var endMin by remember { mutableIntStateOf(existing?.endMinute() ?: (9 * 60 + 40)) }
+    var startMin by remember { mutableIntStateOf(src?.startMinute() ?: (8 * 60)) }
+    var endMin by remember { mutableIntStateOf(src?.endMinute() ?: (9 * 60 + 40)) }
     var repeatCount by remember { mutableIntStateOf(1) }
     var confirmDelete by remember { mutableStateOf(false) }
+
+    // 同一种安排在各周的那几节（包括这一节自己）。只有一节的话就不显示"应用到"
+    val siblings = remember(existing) { existing?.let { d.siblingsOf(it) }.orEmpty() }
+    var scope by remember { mutableStateOf(setOfNotNull(existing?.id)) }
+    val targets: List<Session> = if (existing == null) emptyList() else
+        (siblings.filter { it.id in scope } + existing).distinctBy { it.id }.sortedBy { it.start }
 
     // 结束时间永远在开始之后，改开始就把结束跟着推
     fun setStart(m: Int) {
@@ -73,11 +87,28 @@ fun SessionEditorDialog(
     val maxRepeat = if (d.weeks > 0) (d.weeks - d.weekOf(date) + 1).coerceIn(1, 40) else 30
 
     fun save() {
-        val n = if (editing) 1 else repeatCount
-        val list = (0 until n).map { i ->
+        if (existing != null) {
+            // 选中的每一周都按同一种方式改：日期挪了几天，其他周也挪几天；时间、地点这些直接换成新的。
+            // origin 留着 —— 那边靠它记住"这节导入的课用户改过了"，重算课表时不再生成原样的一份
+            val shift = date.toEpochDay() - existing.start.toLocalDate().toEpochDay()
+            onSave(targets.map { sib ->
+                val dt = sib.start.toLocalDate().plusDays(shift)
+                sib.copy(
+                    title = title.trim(),
+                    location = location.trim(),
+                    teacher = teacher.trim(),
+                    note = note.trim(),
+                    start = dt.atMinuteOfDay(startMin),
+                    end = dt.atMinuteOfDay(maxOf(endMin, startMin + 5)),
+                    manual = true
+                )
+            })
+            return
+        }
+        val list = (0 until repeatCount).map { i ->
             val dt = date.plusWeeks(i.toLong())
             Session(
-                id = if (editing && i == 0) existing!!.id else newId(),
+                id = newId(),
                 title = title.trim(),
                 location = location.trim(),
                 teacher = teacher.trim(),
@@ -90,26 +121,45 @@ fun SessionEditorDialog(
         onSave(list)
     }
 
+    val n = targets.size
+    val header = when {
+        editing -> "编辑"
+        template != null -> "复制「${template.title}」"
+        else -> "添加课程 / 事件"
+    }
+
     Sheet(
-        pal, if (editing) "编辑" else "添加课程 / 事件", onClose,
+        pal, header, onClose,
         footer = {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (editing) {
                     if (confirmDelete) {
-                        DangerChip(pal, "确认删除", modifier = Modifier.height(Dim.touch)) { onDelete(existing!!) }
+                        DangerChip(pal, if (n > 1) "确认删除 $n 节" else "确认删除", modifier = Modifier.height(Dim.touch)) {
+                            onDelete(targets.map { it.id }.toSet())
+                        }
                     } else {
                         DangerChip(pal, "删除", modifier = Modifier.height(Dim.touch)) { confirmDelete = true }
                     }
                     Spacer(Modifier.width(Dim.s))
                 }
                 PrimaryButton(
-                    pal, if (editing) "保存" else "添加", enabled = title.isNotBlank(),
+                    pal,
+                    when {
+                        editing && n > 1 -> "保存（$n 节）"
+                        editing -> "保存"
+                        else -> "添加"
+                    },
+                    enabled = title.isNotBlank(),
                     modifier = Modifier.weight(1f)
                 ) { save() }
             }
         }
     ) {
         Column {
+            if (template != null) {
+                Hint(pal, "名称、地点、老师和时间都照原来那节填好了，改一下日期或时间就能添加。")
+                Spacer(Modifier.height(Dim.s))
+            }
             OutlinedTextField(
                 value = title,
                 onValueChange = { title = it },
@@ -171,6 +221,53 @@ fun SessionEditorDialog(
             }
             Spacer(Modifier.height(6.dp))
             Hint(pal, "连上两节：先点前一节，再把「结束」往后调到位。")
+
+            if (existing != null && siblings.size > 1) {
+                Spacer(Modifier.height(20.dp))
+                Label(pal, "应用到")
+                Card(pal, color = pal.panel2) {
+                    Column(Modifier.padding(horizontal = Dim.l, vertical = Dim.m)) {
+                        val later = siblings.filter { it.start >= existing.start }.map { it.id }.toSet()
+                        val all = siblings.map { it.id }.toSet()
+                        ChoiceChips(
+                            pal,
+                            listOf("只改这一节", "这一节及以后", "全部 ${siblings.size} 周"),
+                            when (scope) {
+                                setOf(existing.id) -> 0
+                                later -> 1
+                                all -> 2
+                                else -> -1
+                            }
+                        ) { i ->
+                            scope = when (i) {
+                                0 -> setOf(existing.id)
+                                1 -> later
+                                else -> all
+                            }
+                        }
+                        Spacer(Modifier.height(Dim.m))
+                        Hint(pal, "也可以一周一周点选（这一节本身总在里面）：")
+                        Spacer(Modifier.height(Dim.s))
+                        ToggleChips(
+                            pal,
+                            siblings.map { s ->
+                                val sd = s.start.toLocalDate()
+                                if (d.weeks > 0) "第${d.weekOf(sd)}周" else "${sd.monthValue}/${sd.dayOfMonth}"
+                            },
+                            siblings.indices.filter { siblings[it].id in scope }.toSet()
+                        ) { i ->
+                            val id = siblings[i].id
+                            if (id != existing.id) scope = if (id in scope) scope - id else scope + id
+                        }
+                        Spacer(Modifier.height(Dim.s))
+                        Text(
+                            if (n > 1) "会改 $n 节。日期往后挪了几天，其他周也一起挪几天。"
+                            else "只改这一节，其他周不动。",
+                            color = pal.muted, fontSize = Fs.caption
+                        )
+                    }
+                }
+            }
 
             if (!editing) {
                 Spacer(Modifier.height(20.dp))
@@ -519,6 +616,57 @@ fun PeriodEditorDialog(
                     }
                 }
                 Spacer(Modifier.height(Dim.s))
+            }
+        }
+    }
+}
+
+/** 单选的一排按钮（三选一那种）。[selected] = -1 表示哪个都不是（逐周点选成了别的组合）。 */
+@Composable
+private fun ChoiceChips(pal: Palette, labels: List<String>, selected: Int, onPick: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        labels.forEachIndexed { i, label ->
+            val on = i == selected
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(Dim.rSmall))
+                    .background(if (on) pal.ink else pal.panel)
+                    .clickable { onPick(i) },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    label, color = if (on) pal.paper else pal.ink2, fontSize = 13.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/** 可多选的一组小格子，一行五个。选中的是深底白字。 */
+@Composable
+private fun ToggleChips(pal: Palette, labels: List<String>, selected: Set<Int>, onToggle: (Int) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        labels.chunked(5).forEachIndexed { r, row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                row.forEachIndexed { c, label ->
+                    val i = r * 5 + c
+                    val on = i in selected
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(Dim.rSmall))
+                            .background(if (on) pal.ink else pal.panel)
+                            .clickable { onToggle(i) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(label, color = if (on) pal.paper else pal.ink2, fontSize = 12.sp, style = NumStyle, maxLines = 1)
+                    }
+                }
+                repeat(5 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }

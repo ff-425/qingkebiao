@@ -54,7 +54,7 @@ object Store {
         if (!f.exists()) return@withContext Timetable()
         val text = runCatching { f.readText() }.getOrNull()
         if (text.isNullOrBlank()) return@withContext Timetable()
-        runCatching { json.decodeFromString<Timetable>(text) }.getOrElse { e ->
+        runCatching { backfillOrigins(json.decodeFromString<Timetable>(text)) }.getOrElse { e ->
             // 读不出来就把原文件挪到一边留着。
             // 直接返回空课表是不行的：界面拿到空的，下一次保存就把它盖掉了，
             // 用户手动加的课、调休记录、改过的作息就永久没了，而且全程没有任何提示。
@@ -63,6 +63,36 @@ object Store {
             lastRecovery = e.message ?: e.toString()
             Timetable()
         }
+    }
+
+    /**
+     * 老数据（v30 及以前）里导入的课没有 [Session.origin]，用户删掉 / 改掉过哪几节也没记。
+     * 读的时候按存着的课程块重新生成一遍、逐节对上号，把 origin 补上；
+     * 生成出来却在现有课表里找不到的，就是用户以前删掉或改掉的，记进 suppressed ——
+     * 不补的话，升级后第一次改作息时间，这些课又全回来了。
+     */
+    fun backfillOrigins(tt: Timetable): Timetable {
+        if (tt.zfBlocks.isEmpty() || tt.sessions.any { it.origin.isNotBlank() }) return tt
+        val termStart = tt.termStartEpochDay?.let { java.time.LocalDate.ofEpochDay(it) } ?: return tt
+        val gen = Zf.toSessions(tt.zfBlocks, termStart, tt.periods.ifEmpty { DEFAULT_PERIODS })
+        if (gen.isEmpty()) return tt
+        val pool = gen.groupBy { Triple(it.title, it.start, it.end) }
+            .mapValues { (_, v) -> v.map { it.origin }.toMutableList() }
+        var matched = 0
+        val sessions = tt.sessions.map { s ->
+            if (s.manual) s
+            else pool[Triple(s.title, s.start, s.end)]?.removeFirstOrNull()
+                ?.let { matched++; s.copy(origin = it) } ?: s
+        }
+        val missing = pool.values.flatten()
+        // 只在绝大部分都对得上的时候才把"找不到的"当成用户删掉的。
+        // 对不上一大片，说明现有课表压根不是按这些课程块生成的，
+        // 这时候乱记，下次重算会把一大片课藏起来。
+        val trustworthy = matched >= gen.size * 0.8 && missing.size <= maxOf(10, gen.size / 10)
+        return tt.copy(
+            sessions = sessions,
+            suppressed = if (trustworthy) (tt.suppressed + missing).distinct() else tt.suppressed
+        )
     }
 
     private fun quarantine(ctx: Context, f: File) {
@@ -331,8 +361,10 @@ object Store {
         val parsed = Zf.toSessions(blocks, termStart, periods)
         if (parsed.isEmpty()) throw Zf.ParseException("按作息表换算后没有生成任何上课记录。")
         val manual = old.sessions.filter { it.manual }
+        // 用户删掉 / 改掉过的那几节，重新导入（查调课）时不再生成回来
+        val sup = old.suppressed.toHashSet()
         val tt = old.copy(
-            sessions = (parsed + manual).sortedBy { it.start },
+            sessions = (parsed.filterNot { it.origin in sup } + manual).sortedBy { it.start },
             termStartEpochDay = termStart.toEpochDay(),
             termWeeks = Zf.maxWeek(blocks).takeIf { it > 0 },
             sourceLabel = "教务系统网页",
@@ -369,7 +401,9 @@ object Store {
         if (tt.zfBlocks.isEmpty()) return tt
         val termStart = tt.termStartEpochDay?.let { java.time.LocalDate.ofEpochDay(it) }
             ?: return tt
+        val sup = tt.suppressed.toHashSet()
         val parsed = Zf.toSessions(tt.zfBlocks, termStart, tt.periods.ifEmpty { DEFAULT_PERIODS })
+            .filterNot { it.origin in sup }
         val manual = tt.sessions.filter { it.manual }
         return tt.copy(sessions = (parsed + manual).sortedBy { it.start })
     }
