@@ -1,7 +1,7 @@
 {
-  "versionCode": 30,
-  "versionName": "30",
+  "versionCode": 31,
+  "versionName": "31",
   "url": "https://qingkebiao.pages.dev/qingkebiao.apk",
-  "size": 16169112,
-  "notes": "首页不再一直提示“还没对过课表”（设置 → 同步里可以再打开）；切到后台再回来，停在原来那一页；修了查调课回来首页还显示旧课表的问题。"
+  "size": 16201880,
+  "notes": "改一周的课不再影响别的周；改作息、查调课后删掉的课不会再回来；修改时可以选应用到哪几周；课程可以复制；左右滑动跟手翻页。"
 }
