@@ -1,7 +1,7 @@
 {
-  "versionCode": 32,
-  "versionName": "32",
+  "versionCode": 33,
+  "versionName": "33",
   "url": "https://qingkebiao.pages.dev/qingkebiao.apk",
   "size": 16201880,
-  "notes": "编辑课程时可以把这次的设置应用到任意几周，自己点选；之前单独改过的那周也能再推到别的周。"
+  "notes": "按钮翻页不再卡顿，连点几次就翻几页；同一时间段有几门课时都能分别修改；调休补课那天改课只改那一天。"
 }
