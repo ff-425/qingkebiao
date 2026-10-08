@@ -135,7 +135,14 @@ data class Timetable(
      * 改作息时间、改开学日期、查调课都会按课程块把课表整个重新生成一遍，
      * 以前生成时不看这个：删掉的那节又回来了，改过时间的那节旁边又冒出一节原时间的。
      */
-    val suppressed: List<String> = emptyList()
+    val suppressed: List<String> = emptyList(),
+    /**
+     * 调休补课那天（"按另一天的课上"）不要的那几节，存 [Derived.copyKeyOf] 算出来的键。
+     * 补课日的课是从原来那天复制过来显示的，并不单独存着。在补课日改一节 / 删一节，
+     * 以前改的是原来那天的课 —— 两天一起变。现在补课日这一节记在这里不再复制，
+     * 改过的另存一节手动的，原来那天不动。
+     */
+    val skippedCopies: List<String> = emptyList()
 )
 
 /* ---------------------------------------------------------------- 多学期 */
@@ -295,12 +302,30 @@ class Derived(val tt: Timetable, val zone: ZoneId = ZoneId.systemDefault()) {
             ov.kind == OverrideKind.HOLIDAY -> own.filter { it.manual }
             ov.kind == OverrideKind.FOLLOW && ov.followEpochDay != null -> {
                 val src = LocalDate.ofEpochDay(ov.followEpochDay)
-                rawOn(src).filter { !it.manual }.map { it.shiftToDate(d, zone) } +
+                val skipped = tt.skippedCopies.toHashSet()
+                // 原来那天的课照搬过来。手动加的事件（考试、讲座）属于那一天本身，不跟着搬；
+                // 但导入的课被用户改过时间也算手动（manual），它还是课，照样搬（origin 不空的就是）
+                rawOn(src)
+                    .filter { !it.manual || it.origin.isNotBlank() }
+                    .filterNot { copyKey(it, d) in skipped }
+                    .map { it.shiftToDate(d, zone) } +
                     own.filter { it.manual }
             }
             else -> own
         }
         return list.sortedBy { it.start }
+    }
+
+    private fun copyKey(src: Session, day: LocalDate) = "${src.origin.ifBlank { src.id }}@${day.toEpochDay()}"
+
+    /**
+     * 补课日显示的那一节（id 带 "@日期"）对应的键，存进 [Timetable.skippedCopies] 就不再复制过来。
+     * 不是补课日复制出来的返回 null。
+     */
+    fun copyKeyOf(shown: Session): String? {
+        if ('@' !in shown.id) return null
+        val base = tt.sessions.firstOrNull { it.id == shown.id.substringBefore('@') } ?: return null
+        return copyKey(base, shown.start.toLocalDate(zone))
     }
 
     fun daysOfWeek(w: Int): List<LocalDate> {

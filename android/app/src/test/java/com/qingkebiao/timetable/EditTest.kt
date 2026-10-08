@@ -163,4 +163,45 @@ class EditTest {
         val cp = d.weeklyCounterparts(afternoon)
         assertEquals(afternoon.startMinute(), cp[4]!!.startMinute())
     }
+
+    /** 国庆调休：10 月 10 日（周六）按 10 月 5 日（周一）的课上 */
+    private fun makeup(tt: Timetable): Pair<Timetable, LocalDate> {
+        val mon6 = start.plusWeeks(5)
+        val sat = mon6.plusDays(5)
+        return tt.copy(overrides = listOf(DayOverride(sat.toEpochDay(), OverrideKind.FOLLOW, followEpochDay = mon6.toEpochDay()))) to sat
+    }
+
+    @Test fun `补课日照搬原来那天改过时间的课`() {
+        val (base, sat) = makeup(fresh())
+        val mon6 = start.plusWeeks(5)
+        val one = base.on(mon6, "高等数学").single()
+        val moved = one.copy(start = one.start + 30 * 60_000, end = one.end + 30 * 60_000, manual = true)
+        val tt = base.copy(sessions = base.sessions.map { if (it.id == one.id) moved else it })
+        val onSat = Derived(tt, ZoneId.of("Asia/Shanghai")).sessionsOn(sat)
+        assertEquals(1, onSat.size)
+        assertEquals(moved.startMinute(), onSat[0].startMinute())
+    }
+
+    @Test fun `补课日改一节只动补课那天`() {
+        val (tt, sat) = makeup(fresh())
+        val d = Derived(tt, ZoneId.of("Asia/Shanghai"))
+        val shown = d.sessionsOn(sat).single()
+        val key = d.copyKeyOf(shown)!!
+        val edited = shown.copy(id = newId(), origin = "", manual = true,
+            start = shown.start + 60 * 60_000, end = shown.end + 60 * 60_000)
+        val after = tt.copy(sessions = tt.sessions + edited, skippedCopies = listOf(key))
+        val d2 = Derived(after, ZoneId.of("Asia/Shanghai"))
+        // 补课日只剩改过的那一节
+        assertEquals(listOf(edited.start), d2.sessionsOn(sat).map { it.start })
+        // 原来那天不动
+        val mon6 = start.plusWeeks(5)
+        assertEquals(d.sessionsOn(mon6).map { it.start }, d2.sessionsOn(mon6).map { it.start })
+    }
+
+    @Test fun `只有补课日复制出来的才有复制键`() {
+        val (tt, sat) = makeup(fresh())
+        val d = Derived(tt, ZoneId.of("Asia/Shanghai"))
+        assertTrue(d.copyKeyOf(d.sessionsOn(sat).single()) != null)
+        assertEquals(null, d.copyKeyOf(tt.sessions.first()))
+    }
 }

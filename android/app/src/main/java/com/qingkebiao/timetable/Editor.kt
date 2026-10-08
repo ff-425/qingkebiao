@@ -75,7 +75,9 @@ fun SessionEditorDialog(
     val baseWeek = existing?.let { d.weekOf(it.start.toLocalDate()) } ?: 0
     val counterparts: Map<Int, Session?> =
         remember(existing) { existing?.let { d.weeklyCounterparts(it) }.orEmpty() }
-    val canScope = existing != null && d.weeks > 1 && baseWeek in 1..d.weeks
+    // 调休补课那天复制过来的那节（id 带 "@"）只改这一天，不提供"应用到别的周"
+    val isMakeupCopy = existing != null && '@' in existing.id
+    val canScope = existing != null && !isMakeupCopy && d.weeks > 1 && baseWeek in 1..d.weeks
     var picked by remember { mutableStateOf(setOf(baseWeek)) }
     val chosen = (picked + baseWeek).filter { it in counterparts || it == baseWeek }.sorted()
     /** 选中的周里已经有这节课、会被改掉的 */
@@ -181,6 +183,10 @@ fun SessionEditorDialog(
         Column {
             if (template != null) {
                 Hint(pal, "名称、地点、老师和时间都照原来那节填好了，改一下日期或时间就能添加。")
+                Spacer(Modifier.height(Dim.s))
+            }
+            if (isMakeupCopy) {
+                MsgBox(pal, "这天是调休补课，按别的日子的课上。这里只改这一天，原来那天的课不变。")
                 Spacer(Modifier.height(Dim.s))
             }
             OutlinedTextField(

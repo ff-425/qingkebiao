@@ -366,6 +366,20 @@ private fun Home(pal: Palette, resumeTick: Int) {
         )
     }
 
+    /**
+     * 在调休补课那天改了一节：补课日不再复制原来那天的这一节，改过的另存成补课日自己的一节。
+     * 新存的这节和导入的课没有关系了（origin 清空），不会去动原来那天。
+     */
+    fun saveCopyEdit(key: String, list: List<Session>) {
+        commit(
+            tt.copy(
+                sessions = (tt.sessions + list.map { it.copy(id = newId(), origin = "", manual = true) })
+                    .sortedBy { it.start },
+                skippedCopies = (tt.skippedCopies + key).distinct()
+            )
+        )
+    }
+
     fun deleteSessions(ids: Set<String>) {
         val gone = tt.sessions.filter { it.id in ids }
         commit(
@@ -426,31 +440,48 @@ private fun Home(pal: Palette, resumeTick: Int) {
     val weekPager = rememberPagerState(initialPage = (weekIdx - 1).coerceIn(0, weekCount - 1)) { weekCount }
     val dayPager = rememberPagerState(initialPage = dayPage(dayDate)) { dayCount }
 
-    // 课表从文件读进来之前一律不同步：那时候 tt 还是空壳，只算得出 1 页，
+    // 周次 / 日期是"现在看哪一页"的唯一来源：按钮、"回到今天"直接改它，顶上的标题立刻变，
+    // pager 再跟着翻过去；手滑是反过来，停稳之后把 pager 停的那页写回周次。
+    //
+    // 两个方向不能互相打架。以前连点"下一页"：上一个翻页动画被下一次点击打断的那一瞬，
+    // pager 算是"停住了"，把中途那页写回周次，周次又把 pager 往回拽 —— 连点 4 次只翻 2 页，
+    // 看着就是卡住、往回弹。所以程序在翻页的时候（autoScrolls > 0），pager 停在哪都不算数。
+    //
+    // 课表从文件读进来之前也一律不同步：那时候 tt 还是空壳，只算得出 1 页，
     // 进程被杀后恢复时会把 pager 挪回第 1 页，再反过来把周次也改成第 1 周。
-    // 按钮、"回到今天"改了 weekIdx / dayDate → 翻过去；隔得远就直接跳，不一页页滚过去
+    var autoScrolls by remember { mutableIntStateOf(0) }
+    val pageAnim = remember { tween<Float>(PAGE_MS, easing = FastOutSlowInEasing) }
     LaunchedEffect(weekIdx, weekCount, loaded) {
         if (!loaded) return@LaunchedEffect
         val target = (weekIdx - 1).coerceIn(0, weekCount - 1)
-        if (weekPager.currentPage != target) {
+        if (weekPager.targetPage == target && weekPager.currentPage == target) return@LaunchedEffect
+        autoScrolls++
+        try {
+            // 隔得远（"回到本周"）就直接跳，不一页页滚过去
             if (kotlin.math.abs(weekPager.currentPage - target) > 2) weekPager.scrollToPage(target)
-            else weekPager.animateScrollToPage(target)
+            else weekPager.animateScrollToPage(target, animationSpec = pageAnim)
+        } finally {
+            autoScrolls--
         }
     }
     LaunchedEffect(dayDate, dayStart, dayCount, loaded) {
         if (!loaded) return@LaunchedEffect
         val target = dayPage(dayDate)
-        if (dayPager.currentPage != target) {
+        if (dayPager.targetPage == target && dayPager.currentPage == target) return@LaunchedEffect
+        autoScrolls++
+        try {
             if (kotlin.math.abs(dayPager.currentPage - target) > 2) dayPager.scrollToPage(target)
-            else dayPager.animateScrollToPage(target)
+            else dayPager.animateScrollToPage(target, animationSpec = pageAnim)
+        } finally {
+            autoScrolls--
         }
     }
     // 手滑停稳了 → 记下现在看的是哪一周 / 哪一天
     LaunchedEffect(weekPager.settledPage) {
-        if (view == ViewMode.Week && has && loaded) weekIdx = weekPager.settledPage + 1
+        if (view == ViewMode.Week && has && loaded && autoScrolls == 0) weekIdx = weekPager.settledPage + 1
     }
     LaunchedEffect(dayPager.settledPage) {
-        if (view == ViewMode.Day && has && loaded) {
+        if (view == ViewMode.Day && has && loaded && autoScrolls == 0) {
             val day = dayStart.plusDays(dayPager.settledPage.toLong())
             if (day != dayDate) {
                 dayDate = day
@@ -560,6 +591,7 @@ private fun Home(pal: Palette, resumeTick: Int) {
                         HorizontalPager(
                             state = dayPager,
                             key = { dayStart.plusDays(it.toLong()).toEpochDay() },
+                            beyondViewportPageCount = 1,
                             modifier = Modifier.fillMaxSize()
                         ) { page ->
                             val day = dayStart.plusDays(page.toLong())
@@ -573,6 +605,8 @@ private fun Home(pal: Palette, resumeTick: Int) {
                         HorizontalPager(
                             state = weekPager,
                             key = { it },
+                            // 左右相邻那页提前排好：点按钮时不用在动画第一帧现场生成一整页课表
+                            beyondViewportPageCount = 1,
                             modifier = Modifier.fillMaxSize()
                         ) { page ->
                             WeekGrid(pal, d, hues, page + 1, hourDp, now) { detail = it }
@@ -634,8 +668,17 @@ private fun Home(pal: Palette, resumeTick: Int) {
             pal = pal, d = d, existing = editorFor,
             defaultDate = if (view == ViewMode.Day) dayDate else d.mondayOfWeek(weekIdx),
             onClose = { editorOpen = false; copyFrom = null },
-            onSave = { saveSessions(it); editorOpen = false; copyFrom = null; detail = null },
-            onDelete = { deleteSessions(it); editorOpen = false; detail = null },
+            onSave = { list ->
+                val key = editorFor?.let { d.copyKeyOf(it) }
+                if (key != null) saveCopyEdit(key, list) else saveSessions(list)
+                editorOpen = false; copyFrom = null; detail = null
+            },
+            onDelete = { ids ->
+                val key = editorFor?.let { d.copyKeyOf(it) }
+                if (key != null) commit(tt.copy(skippedCopies = (tt.skippedCopies + key).distinct()))
+                else deleteSessions(ids)
+                editorOpen = false; detail = null
+            },
             template = copyFrom
         )
     }
@@ -650,13 +693,15 @@ private fun Home(pal: Palette, resumeTick: Int) {
         DetailDialog(
             pal, d, hues, s,
             onClose = { detail = null },
-            // 调休搬过来的那节，显示的日期是搬过来那天；改的应该是存着的原始那节
-            onEdit = {
-                editorFor = tt.sessions.firstOrNull { it.id == baseId(s) } ?: s.copy(id = baseId(s))
+            // 调休补课那天显示的课是从原来那天复制过来的（id 带 "@日期"）：编辑它只改补课这一天，
+            // 原来那天不动。其他的课编辑的是存着的那一节本身。
+            onEdit = { x ->
+                editorFor = if (d.copyKeyOf(x) != null) x
+                    else tt.sessions.firstOrNull { it.id == baseId(x) } ?: x.copy(id = baseId(x))
                 copyFrom = null
                 editorOpen = true
             },
-            onCopy = { copyFrom = s; editorFor = null; editorOpen = true }
+            onCopy = { x -> copyFrom = x; editorFor = null; editorOpen = true }
         )
     }
 }
@@ -1459,9 +1504,18 @@ private fun ImportDialog(
 
 @Composable
 private fun DetailDialog(
-    pal: Palette, d: Derived, hues: Map<String, Float>, s: Session,
-    onClose: () -> Unit, onEdit: () -> Unit, onCopy: () -> Unit
+    pal: Palette, d: Derived, hues: Map<String, Float>, tapped: Session,
+    onClose: () -> Unit, onEdit: (Session) -> Unit, onCopy: (Session) -> Unit
 ) {
+    // 同一个时间段有好几门课（周视图里并排挤成窄条的那种），点哪一条都把这个时段的课全列出来，
+    // 每门都能看、能改。以前只能打开点中的那一门，另一门窄得点不准，就改不到。
+    val slot = remember(d, tapped) {
+        d.sessionsOn(tapped.start.toLocalDate())
+            .filter { !it.allDay && it.start < tapped.end && tapped.start < it.end }
+            .ifEmpty { listOf(tapped) }
+    }
+    var cur by remember(tapped) { mutableStateOf(tapped) }
+    val s = slot.firstOrNull { it.id == cur.id } ?: tapped
     val same = d.tt.sessions.filter { it.title == s.title }
     // 一门课可能"周一在这上、周四在那上"。地点和时间必须成对列，
     // 分开列成两串就没法对应了 —— 这是之前那版最容易看错的地方。
@@ -1476,13 +1530,41 @@ private fun DetailDialog(
         footer = {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 // 同一门课临时加一节、换个时间再上一次：不用再把名字地点老师敲一遍
-                OutlineChip(pal, "复制", modifier = Modifier.height(Dim.touch), onClick = onCopy)
+                OutlineChip(pal, "复制", modifier = Modifier.height(Dim.touch)) { onCopy(s) }
                 Spacer(Modifier.width(Dim.s))
-                PrimaryButton(pal, "编辑这一节", modifier = Modifier.weight(1f), onClick = onEdit)
+                PrimaryButton(
+                    pal, if (slot.size > 1) "编辑「${s.title}」" else "编辑这一节",
+                    modifier = Modifier.weight(1f)
+                ) { onEdit(s) }
             }
         }
     ) {
         Column {
+            if (slot.size > 1) {
+                Text("这个时间段有 ${slot.size} 门课，点一下切换：", color = pal.muted, fontSize = Fs.caption)
+                Spacer(Modifier.height(Dim.s))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arr.spacedBy(6.dp)) {
+                    slot.forEach { x ->
+                        val on = x.id == s.id
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(Dim.rSmall))
+                                .background(if (on) pal.ink else pal.panel2)
+                                .clickable { cur = x },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                x.title, color = if (on) pal.paper else pal.ink2, fontSize = 13.sp,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 6.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(Dim.m))
+            }
             // 头部用课程自己的颜色，和课表上那一块对得上
             Column(
                 Modifier
